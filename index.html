@@ -1,0 +1,3852 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuroApetito AR — Saturación Informativa y Estímulo Sinestésico</title>
+  <style>
+    /* =====================================================================
+       ESTILOS GLOBALES Y CAPA HUD (INTERFAZ SUPERPUESTA EN PANTALLA)
+       ===================================================================== */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0d131a;
+      font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      color: #eef4fa;
+    }
+
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    /* Viñeta sutil que cambia según el estado (fatiga fría vs. calidez sinestésica) */
+    #vignette-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+      background: radial-gradient(circle at center, transparent 52%, rgba(8, 14, 22, 0.55) 100%);
+      transition: background 1.4s ease, opacity 1s ease;
+    }
+
+    body.state-sensory #vignette-overlay {
+      background: radial-gradient(circle at center, transparent 58%, rgba(45, 18, 5, 0.35) 100%);
+    }
+
+    /* Líneas de interferencia sutiles en Estado 1 */
+    #overload-scanlines {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 3;
+      opacity: 0.22;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255, 255, 255, 0.03) 0px,
+        rgba(255, 255, 255, 0.03) 1px,
+        transparent 1px,
+        transparent 4px
+      );
+      transition: opacity 0.35s ease;
+    }
+
+    body:not(.state-explore) #overload-scanlines {
+      opacity: 0;
+    }
+
+    /* Capa HUD superior */
+    #hud {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 18px 24px;
+    }
+
+    /* Barra superior: estado actual y controles discretos */
+    .hud-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .phase-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(11, 18, 28, 0.68);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(130, 195, 255, 0.25);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: border-color 0.8s ease, background 0.8s ease;
+    }
+
+    .phase-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #ff4d4d;
+      box-shadow: 0 0 10px #ff4d4d;
+      transition: background 0.6s ease, box-shadow 0.6s ease;
+    }
+
+    body.state-explore .phase-dot {
+      background: #7dd3fc;
+      box-shadow: 0 0 10px #7dd3fc;
+    }
+    body.state-menu .phase-dot {
+      background: #00f5ff;
+      box-shadow: 0 0 12px #00f5ff;
+    }
+    body.state-eat .phase-dot {
+      background: #ffbe3b;
+      box-shadow: 0 0 12px #ffbe3b;
+    }
+    body.state-sensory .phase-dot {
+      background: #ff7b00;
+      box-shadow: 0 0 14px #ff9f1c;
+    }
+    body.state-sensory .phase-badge {
+      border-color: rgba(255, 175, 65, 0.45);
+      background: rgba(28, 16, 8, 0.65);
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 8px;
+      pointer-events: auto;
+    }
+
+    .hud-btn {
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(12, 18, 28, 0.62);
+      backdrop-filter: blur(8px);
+      color: #dbe8f5;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 8px 13px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hud-btn:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(255, 255, 255, 0.45);
+      transform: translateY(-1px);
+    }
+
+    .hud-btn kbd {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.14);
+      font-family: inherit;
+      font-size: 11px;
+    }
+
+    /* Zona central / inferior para tarjetas de estado */
+    .hud-bottom {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+
+    /* Panel vertical derecho de Alerta Biométrica con Escaneo Corporal (Estado 1) */
+    #alert-hud {
+      position: fixed;
+      right: 24px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 318px;
+      max-height: calc(100vh - 110px);
+      overflow-y: auto;
+      pointer-events: auto;
+      z-index: 12;
+      background: linear-gradient(165deg, rgba(46, 10, 14, 0.93), rgba(20, 10, 16, 0.95));
+      backdrop-filter: blur(12px);
+      border: 2px solid #ff4d4d;
+      border-radius: 16px;
+      padding: 16px 18px;
+      box-shadow: 0 0 36px rgba(255, 65, 54, 0.5), inset 0 0 22px rgba(255, 140, 0, 0.16);
+      animation: alertPulse 1.1s infinite alternate ease-in-out;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #body-scan-canvas {
+      width: 100%;
+      height: 230px;
+      border-radius: 10px;
+      background: rgba(12, 6, 10, 0.85);
+      border: 1px solid rgba(255, 90, 75, 0.45);
+      display: block;
+    }
+
+    /* Panel izquierdo de indicadores Distracción y Hambre (Estados 3 y 4) */
+    #bio-meters-hud {
+      position: fixed;
+      left: 24px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 278px;
+      pointer-events: none;
+      z-index: 12;
+      background: rgba(9, 18, 29, 0.84);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(0, 245, 255, 0.38);
+      border-radius: 16px;
+      padding: 16px 18px;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+      transition: border-color 0.6s ease, background 0.6s ease;
+    }
+
+    body.state-sensory #bio-meters-hud {
+      background: rgba(26, 14, 7, 0.86);
+      border-color: rgba(255, 190, 59, 0.55);
+    }
+
+    .bio-header {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #9be8ff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .meter-block {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .meter-label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .meter-track {
+      width: 100%;
+      height: 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      transition: width 0.38s cubic-bezier(0.22, 1, 0.36, 1), background 0.4s ease;
+    }
+
+    #distraction-fill {
+      width: 100%;
+      background: linear-gradient(90deg, #ff4d6d, #ff9f1c);
+      box-shadow: 0 0 12px rgba(255, 77, 109, 0.65);
+    }
+
+    #hunger-fill {
+      width: 0%;
+      background: linear-gradient(90deg, #ffd166, #ff6b00);
+      box-shadow: 0 0 12px rgba(255, 159, 28, 0.7);
+    }
+
+    .bio-status-note {
+      font-size: 12px;
+      line-height: 1.4;
+      color: #cfe6f5;
+      padding-top: 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    @keyframes alertPulse {
+      from {
+        border-color: #ff3b30;
+        box-shadow: 0 0 22px rgba(255, 59, 48, 0.42);
+      }
+      to {
+        border-color: #ffb020;
+        box-shadow: 0 0 38px rgba(255, 168, 0, 0.7);
+      }
+    }
+
+    .alert-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: #ffb84d;
+      text-transform: uppercase;
+    }
+
+    .alert-body {
+      font-size: 14px;
+      line-height: 1.45;
+      color: #fff3f0;
+      margin-bottom: 12px;
+    }
+
+    .alert-footer {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+
+    .alert-timer-wrap {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .alert-timer-bar {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #ff4d4d, #ffb020);
+      transform-origin: left center;
+    }
+
+    #btn-dismiss-alert {
+      appearance: none;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #ff5e3a, #ff9f1c);
+      color: #160904;
+      font-weight: 800;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(255, 120, 30, 0.45);
+      transition: transform 0.15s ease, filter 0.15s ease;
+    }
+
+    #btn-dismiss-alert:hover {
+      transform: scale(1.04);
+      filter: brightness(1.1);
+    }
+
+    /* Indicador de instrucciones para Estados 2, 3 y 4 */
+    #instruction-pill {
+      display: none;
+      padding: 12px 22px;
+      border-radius: 14px;
+      background: rgba(8, 17, 28, 0.78);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(0, 245, 255, 0.4);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      text-align: center;
+      max-width: 680px;
+    }
+
+    #instruction-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 4px;
+    }
+
+    #instruction-sub {
+      font-size: 13px;
+      color: #a8d8ea;
+    }
+
+    /* Barra de mordiscos en Estado 3 */
+    #eat-progress-wrap {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+      justify-content: center;
+    }
+
+    .bite-pip {
+      width: 28px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.16);
+      border: 1px solid rgba(0, 245, 255, 0.35);
+      transition: all 0.25s ease;
+    }
+
+    .bite-pip.eaten {
+      background: linear-gradient(90deg, #ffbe3b, #ff6b00);
+      border-color: #ffe066;
+      box-shadow: 0 0 12px rgba(255, 175, 45, 0.8);
+      transform: scaleY(1.2);
+    }
+
+    /* Tarjeta de estado GPS en Estado 4 */
+    #gps-hud {
+      display: none;
+      pointer-events: auto;
+      padding: 14px 22px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(28, 15, 6, 0.85), rgba(14, 24, 34, 0.85));
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 190, 59, 0.55);
+      box-shadow: 0 10px 36px rgba(255, 120, 20, 0.28);
+      text-align: center;
+      max-width: 600px;
+    }
+
+    .gps-route-title {
+      font-size: 16px;
+      font-weight: 800;
+      color: #ffe066;
+      margin-bottom: 4px;
+    }
+
+    .gps-route-meta {
+      font-size: 13px;
+      color: #ffd6a5;
+    }
+
+    /* Tooltip flotante al hacer hover sobre tarjetas 3D */
+    #hover-tooltip {
+      position: fixed;
+      z-index: 15;
+      pointer-events: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      background: rgba(6, 16, 26, 0.9);
+      border: 1px solid #00f5ff;
+      color: #e6fcff;
+      font-size: 12px;
+      font-weight: 600;
+      transform: translate(-50%, -135%);
+      display: none;
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0, 245, 255, 0.28);
+    }
+
+    /* Pantalla de carga / error CDN si no hay conexión */
+    #fallback-msg {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: #0d131a;
+      color: #fff;
+      z-index: 99;
+      padding: 32px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body class="state-explore">
+  <div id="canvas-container"></div>
+  <div id="vignette-overlay"></div>
+  <div id="overload-scanlines"></div>
+  <div id="hover-tooltip"></div>
+
+  <div id="hud">
+    <div class="hud-top">
+      <div class="phase-badge">
+        <span class="phase-dot"></span>
+        <span id="phase-label">Estado 0 · Exploración Libre del Campus</span>
+      </div>
+
+      <div class="top-actions">
+        <span class="hud-btn" style="cursor:default;pointer-events:none;opacity:0.88;">
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Mover · Arrastrar: Mirar
+        </span>
+        <button class="hud-btn" id="btn-audio" title="Activar o silenciar audio sinestésico procedural">
+          <span id="audio-icon">🔊</span> Audio
+        </button>
+        <button class="hud-btn" id="btn-reset" title="Reiniciar experiencia desde cero (Tecla R)">
+          ↻ Reiniciar <kbd>R</kbd>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tarjeta vertical derecha de Alerta Crítica con Escaneo Corporal (Estado 1) -->
+    <div id="alert-hud">
+      <div class="alert-header">
+        <span>⚠ Escaneo Crítico</span>
+        <span id="alert-countdown">5.0s</span>
+      </div>
+      <canvas id="body-scan-canvas" width="276" height="230"></canvas>
+      <div class="alert-body" style="margin-bottom:4px;font-size:13px;">
+        <strong>ALERTA DE SALUD:</strong> 6 horas sin ingerir alimentos. Riesgo de fatiga cognitiva, hipoglucemia y bajo rendimiento académico.
+      </div>
+      <div class="alert-footer">
+        <div class="alert-timer-wrap">
+          <div class="alert-timer-bar" id="alert-timer-bar"></div>
+        </div>
+        <button id="btn-dismiss-alert">Ignorar / Continuar</button>
+      </div>
+    </div>
+
+    <!-- Indicadores izquierdos de Distracción y Hambre (al seleccionar comida) -->
+    <div id="bio-meters-hud">
+      <div class="bio-header">
+        <span>🧠 Estado Bio-Sensorial</span>
+        <span id="bio-food-tag" style="color:#ffe066;font-size:11px;"></span>
+      </div>
+
+      <div class="meter-block">
+        <div class="meter-label-row">
+          <span style="color:#ff8fa3;">Distracción</span>
+          <span id="distraction-val" style="color:#ffb3c1;">100%</span>
+        </div>
+        <div class="meter-track">
+          <div class="meter-fill" id="distraction-fill"></div>
+        </div>
+      </div>
+
+      <div class="meter-block">
+        <div class="meter-label-row">
+          <span style="color:#ffd166;">Hambre</span>
+          <span id="hunger-val" style="color:#ffe066;">0%</span>
+        </div>
+        <div class="meter-track">
+          <div class="meter-fill" id="hunger-fill"></div>
+        </div>
+      </div>
+
+      <div class="bio-status-note" id="bio-status-note">
+        Saturación alta: tu atención está dispersa y tu apetito bloqueado. Come con [C].
+      </div>
+    </div>
+
+    <div class="hud-bottom">
+      <!-- Indicador HUD para Estados 0, 2 y 3 -->
+      <div id="instruction-pill">
+        <div id="instruction-title"></div>
+        <div id="instruction-sub"></div>
+        <div id="eat-progress-wrap">
+          <span style="font-size:12px;color:#ffe066;font-weight:700;" id="eat-count-label">0 / 5</span>
+          <div class="bite-pip" data-pip="0"></div>
+          <div class="bite-pip" data-pip="1"></div>
+          <div class="bite-pip" data-pip="2"></div>
+          <div class="bite-pip" data-pip="3"></div>
+          <div class="bite-pip" data-pip="4"></div>
+        </div>
+      </div>
+
+      <!-- Tarjeta HUD de Ruta Sinestésica y GPS (Estado 4) -->
+      <div id="gps-hud">
+        <div class="gps-route-title" id="gps-title">Activación Sinestésica Completa · Ruta GPS Activa</div>
+        <div class="gps-route-meta" id="gps-meta">85m - 1 min caminando hacia Cafetería del Campus</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="fallback-msg">
+    <div>
+      <h2>No se pudo cargar Three.js desde el CDN</h2>
+      <p style="margin-top:8px;opacity:0.8;">Verifica tu conexión a internet para cargar la librería Three.js r128.</p>
+    </div>
+  </div>
+
+  <!-- Carga principal de Three.js vía CDN con respaldo automático -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"
+          onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js';"></script>
+
+  <script>
+  (function () {
+    'use strict';
+
+    if (typeof THREE === 'undefined') {
+      document.getElementById('fallback-msg').style.display = 'flex';
+      return;
+    }
+
+    /* =========================================================================
+       1. DEFINICIÓN DE ESTADOS Y CATÁLOGO DE PLATILLOS
+       ========================================================================= */
+    const STATES = {
+      CAMPUS_EXPLORE: 'CAMPUS_EXPLORE',
+      ALERT_SCROLL: 'ALERT_SCROLL',
+      MENU_3D: 'MENU_3D',
+      HOLOGRAM_EAT: 'HOLOGRAM_EAT',
+      SENSORY_GPS: 'SENSORY_GPS'
+    };
+
+    const FOOD_CATALOG = [
+      {
+        id: 'burger',
+        name: 'Hamburguesa Doble con Queso',
+        shortName: 'Hamburguesa Doble',
+        emoji: '🍔',
+        venue: 'BURGER LAB CAMPUS',
+        accent: '#ff9f1c',
+        distanceText: '85m - 1 min caminando',
+        subtitle: 'Proteína + carbohidrato de rápida recuperación'
+      },
+      {
+        id: 'pizza',
+        name: 'Pizza Artesanal Pepperoni',
+        shortName: 'Pizza Pepperoni',
+        emoji: '🍕',
+        venue: 'PIZZERÍA ARTESANAL',
+        accent: '#ff595e',
+        distanceText: '85m - 1 min caminando',
+        subtitle: 'Masa madre horneada y queso fundido'
+      },
+      {
+        id: 'ramen',
+        name: 'Ramen Caliente Tradicional',
+        shortName: 'Ramen Tradicional',
+        emoji: '🍜',
+        venue: 'RAMEN HOUSE',
+        accent: '#ffbe0b',
+        distanceText: '85m - 1 min caminando',
+        subtitle: 'Caldo reconfortante, fideos y huevo ajitama'
+      },
+      {
+        id: 'tacos',
+        name: 'Tacos al Pastor',
+        shortName: 'Tacos al Pastor',
+        emoji: '🌮',
+        venue: 'TAQUERÍA EL PASTOR',
+        accent: '#fb5607',
+        distanceText: '85m - 1 min caminando',
+        subtitle: 'Tres tacos con piña asada, cilantro y limón'
+      },
+      {
+        id: 'smoothie',
+        name: 'Smoothie Tropical Energético',
+        shortName: 'Smoothie Tropical',
+        emoji: '🥤',
+        venue: 'TROPICAL SMOOTHIE BAR',
+        accent: '#06d6a0',
+        distanceText: '85m - 1 min caminando',
+        subtitle: 'Mango, maracuyá, frutos rojos y vitaminas'
+      },
+      {
+        id: 'sushi',
+        name: 'Sushi Roll Variado',
+        shortName: 'Sushi Variado',
+        emoji: '🍣',
+        venue: 'SUSHI & BENTO CAMPUS',
+        accent: '#ff006e',
+        distanceText: '85m - 1 min caminando',
+        subtitle: 'Selección de nigiris y makis frescos'
+      }
+    ];
+
+    /* =========================================================================
+       2. SINTETIZADOR WEB AUDIO PROCEDURAL (SIN ARCHIVOS EXTERNOS)
+       ========================================================================= */
+    const SoundFX = {
+      ctx: null,
+      muted: false,
+      init() {
+        if (this.ctx) return;
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (AC) this.ctx = new AC();
+        } catch (e) {}
+      },
+      resume() {
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+      },
+      playTone(freq, duration, type = 'sine', gainVal = 0.08, slideTo = null) {
+        if (this.muted) return;
+        try {
+          this.init();
+          if (!this.ctx) return;
+          this.resume();
+          const now = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, now);
+          if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, now + duration);
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(gainVal, now + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + duration + 0.02);
+        } catch (e) {}
+      },
+      playAlertPing() {
+        this.playTone(880, 0.14, 'sawtooth', 0.055, 620);
+        setTimeout(() => this.playTone(980, 0.18, 'triangle', 0.06, 740), 140);
+      },
+      playStopNoise() {
+        this.playTone(520, 0.18, 'triangle', 0.09, 220);
+        setTimeout(() => this.playTone(660, 0.25, 'sine', 0.07, 880), 90);
+      },
+      playHover() {
+        this.playTone(760, 0.06, 'sine', 0.035, 920);
+      },
+      playSelect() {
+        this.playTone(440, 0.22, 'sine', 0.08, 880);
+        setTimeout(() => this.playTone(660, 0.28, 'triangle', 0.06, 990), 70);
+      },
+      playBite(step) {
+        // Escala pentatónica cálida ascendente en cada mordisco
+        const scale = [330, 392, 440, 523.25, 659.25];
+        const f = scale[Math.min(step, scale.length - 1)];
+        this.playTone(f, 0.22, 'triangle', 0.1, f * 1.25);
+        this.playTone(f * 1.5, 0.18, 'sine', 0.05);
+      },
+      playSensoryBloom() {
+        const chord = [261.63, 329.63, 392.0, 493.88, 587.33];
+        chord.forEach((f, idx) => {
+          setTimeout(() => this.playTone(f, 0.9, 'sine', 0.055), idx * 75);
+        });
+      }
+    };
+
+    /* =========================================================================
+       3. CONFIGURACIÓN PRINCIPAL DE THREE.JS, CÁMARA Y POST-ILUMINACIÓN
+       ========================================================================= */
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+
+    // Niebla diurna inicial ligera (refleja fatiga visual en los primeros estados)
+    const coldFogColor = new THREE.Color('#bdd0df');
+    const warmFogColor = new THREE.Color('#c4e3fa');
+    scene.fog = new THREE.FogExp2(coldFogColor.clone(), 0.015);
+
+    const camera = new THREE.PerspectiveCamera(
+      56,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      180
+    );
+
+    // Controlador de cámara en primera persona (movimiento libre W/A/S/D + mirada fluida)
+    const START_PLAYER_POS = new THREE.Vector3(0, 1.44, 3.85);
+    const playerPos = START_PLAYER_POS.clone();
+    const playerVel = new THREE.Vector3();
+    let playerYaw = 0;
+    let playerPitch = -0.08;
+    let targetYaw = 0;
+    let targetPitch = -0.08;
+    let walkPhase = 0;
+    let autoGuideTimer = 0;
+
+    camera.position.copy(playerPos);
+    const currentCamLook = new THREE.Vector3(0, 1.25, 1.2);
+    scene.add(camera);
+
+    // Contenedor AR móvil que sigue la posición y orientación horizontal del usuario
+    const handRig = new THREE.Group();
+    handRig.position.copy(playerPos);
+    scene.add(handRig);
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      powerPreference: 'high-performance'
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    /* =========================================================================
+       4. CIELO PROCEDURAL DIURNO (DÍA DESPEJADO + NUBES LOW POLY)
+       ========================================================================= */
+    const skyUniforms = {
+      uTopColor: { value: new THREE.Color('#4a86c5') },
+      uMidColor: { value: new THREE.Color('#8ec0e8') },
+      uBottomColor: { value: new THREE.Color('#cfe4f5') },
+      uSunDir: { value: new THREE.Vector3(0.42, 0.68, -0.6).normalize() },
+      uSunGlow: { value: 0.45 }
+    };
+
+    const skyMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      uniforms: skyUniforms,
+      vertexShader: `
+        varying vec3 vWorldPos;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorldPos = wp.xyz;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uTopColor;
+        uniform vec3 uMidColor;
+        uniform vec3 uBottomColor;
+        uniform vec3 uSunDir;
+        uniform float uSunGlow;
+        varying vec3 vWorldPos;
+        void main() {
+          vec3 dir = normalize(vWorldPos);
+          float h = clamp(dir.y, -0.1, 1.0);
+          vec3 col = mix(uBottomColor, uMidColor, smoothstep(-0.05, 0.28, h));
+          col = mix(col, uTopColor, smoothstep(0.24, 0.85, h));
+          float sunDot = max(dot(dir, uSunDir), 0.0);
+          col += vec3(1.0, 0.92, 0.72) * pow(sunDot, 12.0) * uSunGlow;
+          col += vec3(1.0, 0.97, 0.86) * smoothstep(0.996, 0.9995, sunDot) * uSunGlow * 2.4;
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+    const skyDome = new THREE.Mesh(new THREE.SphereGeometry(165, 24, 16), skyMat);
+    scene.add(skyDome);
+
+    /* =========================================================================
+       5. SISTEMA DE ILUMINACIÓN DIURNA (DÍA DESATURADO -> DÍA SOLEADO VIBRANTE)
+       ========================================================================= */
+    const hemiLight = new THREE.HemisphereLight('#cfe2f5', '#606c75', 1.15);
+    scene.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight('#f2f7fc', 1.35);
+    sunLight.position.set(28, 42, -26);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 2;
+    sunLight.shadow.camera.far = 145;
+    const d = 52;
+    sunLight.shadow.camera.left = -d;
+    sunLight.shadow.camera.right = d;
+    sunLight.shadow.camera.top = d;
+    sunLight.shadow.camera.bottom = -d;
+    sunLight.shadow.bias = -0.0005;
+    scene.add(sunLight);
+
+    // Luz de relleno ambiental diurna
+    const fillLight = new THREE.DirectionalLight('#a6c5e0', 0.5);
+    fillLight.position.set(-16, 14, 16);
+    scene.add(fillLight);
+
+    // Luz puntual de neón/holograma sobre el teléfono y comida central
+    const holoLight = new THREE.PointLight('#00f5ff', 0, 6.5, 1.6);
+    holoLight.position.set(0, 0.12, -2.2);
+    handRig.add(holoLight);
+
+    // Paletas diurnas para interpolación suave (día nublado/fatigado -> día soleado vibrante)
+    const ATMOSPHERE = {
+      cold: {
+        skyTop: new THREE.Color('#5a82ad'),
+        skyMid: new THREE.Color('#95b5d4'),
+        skyBottom: new THREE.Color('#cbdce8'),
+        sunGlow: 0.35,
+        fogColor: new THREE.Color('#bdd0df'),
+        fogDensity: 0.015,
+        hemiSky: new THREE.Color('#cde0f2'),
+        hemiGround: new THREE.Color('#5b646e'),
+        hemiInt: 1.05,
+        sunColor: new THREE.Color('#e8eff7'),
+        sunInt: 1.2,
+        fillColor: new THREE.Color('#9ab6cf'),
+        fillInt: 0.45
+      },
+      warm: {
+        skyTop: new THREE.Color('#1d75d8'),
+        skyMid: new THREE.Color('#5ab0f7'),
+        skyBottom: new THREE.Color('#c2e5ff'),
+        sunGlow: 1.0,
+        fogColor: new THREE.Color('#c4e3fa'),
+        fogDensity: 0.0065,
+        hemiSky: new THREE.Color('#fff5dc'),
+        hemiGround: new THREE.Color('#7a6250'),
+        hemiInt: 1.28,
+        sunColor: new THREE.Color('#fff0c4'),
+        sunInt: 1.95,
+        fillColor: new THREE.Color('#ffd39e'),
+        fillInt: 0.68
+      }
+    };
+
+    // Factor de calidez atmosférica: 0 = frío agotador, 1 = golden hour vibrante
+    let targetWarmth = 0;
+    let currentWarmth = 0;
+
+    /* =========================================================================
+       6. UTILIDADES PARA MATERIALES LOW POLY Y TEXTURAS EN CANVAS
+       ========================================================================= */
+    function lpMat(color, opts = {}) {
+      return new THREE.MeshStandardMaterial({
+        color,
+        flatShading: true,
+        roughness: opts.roughness !== undefined ? opts.roughness : 0.78,
+        metalness: opts.metalness !== undefined ? opts.metalness : 0.08,
+        emissive: opts.emissive || '#000000',
+        emissiveIntensity: opts.emissiveIntensity || 0,
+        transparent: Boolean(opts.transparent),
+        opacity: opts.opacity !== undefined ? opts.opacity : 1,
+        wireframe: Boolean(opts.wireframe),
+        side: opts.side || THREE.FrontSide
+      });
+    }
+
+    function createCanvasTex(w, h, drawFn) {
+      const cv = document.createElement('canvas');
+      cv.width = w;
+      cv.height = h;
+      const ctx = cv.getContext('2d');
+      drawFn(ctx, w, h);
+      const tex = new THREE.CanvasTexture(cv);
+      tex.encoding = THREE.sRGBEncoding;
+      tex.needsUpdate = true;
+      return { tex, cv, ctx };
+    }
+
+    /* =========================================================================
+       7. CONSTRUCCIÓN PROCEDURAL DEL ENTORNO DEL CAMPUS UNIVERSITARIO
+       ========================================================================= */
+    const campusGroup = new THREE.Group();
+    scene.add(campusGroup);
+
+    const lampBulbs = [];
+    const buildingWindowMats = [];
+    const students = [];
+    const clouds = [];
+    const restaurantsMap = {}; // Mapa de restaurantes por food.id
+
+    function buildCampusPlaza() {
+      // --- 7.0 Nubes Low Poly flotando en el cielo diurno ---
+      const cloudMat = lpMat('#ffffff', { roughness: 0.95 });
+      const cloudCoords = [
+        [-28, 22, -32, 1.8],
+        [-8, 25, -42, 2.2],
+        [18, 23, -36, 1.9],
+        [34, 26, -24, 1.6],
+        [-32, 24, -10, 1.5],
+        [8, 27, -18, 1.4]
+      ];
+      cloudCoords.forEach(([cx, cy, cz, cs]) => {
+        const cGrp = new THREE.Group();
+        cGrp.position.set(cx, cy, cz);
+        for (let p = 0; p < 3; p++) {
+          const puff = new THREE.Mesh(
+            new THREE.IcosahedronGeometry((1.6 - p * 0.25) * cs, 0),
+            cloudMat
+          );
+          puff.position.set((p - 1) * 1.4 * cs, (p % 2) * 0.4 * cs, 0);
+          puff.scale.set(1.3, 0.72, 0.9);
+          cGrp.add(puff);
+        }
+        campusGroup.add(cGrp);
+        clouds.push({ grp: cGrp, baseX: cx, speed: 0.35 + Math.random() * 0.25 });
+      });
+
+      // --- 7.1 Terreno de césped universitario amplio y red de avenidas pavimentadas ---
+      const groundGeo = new THREE.PlaneGeometry(160, 160, 32, 32);
+      groundGeo.rotateX(-Math.PI / 2);
+      const pos = groundGeo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i);
+        const z = pos.getZ(i);
+        const dist = Math.hypot(x, z);
+        if (dist > 38) {
+          pos.setY(i, (Math.sin(x * 0.22) + Math.cos(z * 0.22)) * 0.22);
+        }
+      }
+      groundGeo.computeVertexNormals();
+      // Césped verde universitario alrededor de las calzadas
+      const ground = new THREE.Mesh(groundGeo, lpMat('#57844c', { roughness: 0.94 }));
+      ground.receiveShadow = true;
+      campusGroup.add(ground);
+
+      // Explanada central adoquinada del Campus ("Quad")
+      const plazaDisc = new THREE.Mesh(
+        new THREE.CylinderGeometry(12.5, 12.8, 0.08, 16),
+        lpMat('#8d97a1', { roughness: 0.88 })
+      );
+      plazaDisc.position.set(0, 0.02, -9.5);
+      plazaDisc.receiveShadow = true;
+      campusGroup.add(plazaDisc);
+
+      const plazaInnerRing = new THREE.Mesh(
+        new THREE.CylinderGeometry(5.2, 5.2, 0.1, 12),
+        lpMat('#aab3bc', { roughness: 0.85 })
+      );
+      plazaInnerRing.position.set(0, 0.03, -9.5);
+      plazaInnerRing.receiveShadow = true;
+      campusGroup.add(plazaInnerRing);
+
+      // Monumento central universitario: Fuente y Torre del Reloj del Campus en (0, 0, -10.5)
+      const monumentGrp = new THREE.Group();
+      monumentGrp.position.set(0, 0, -10.5);
+
+      const fountainRim = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.6, 2.8, 0.45, 12),
+        lpMat('#cfd6de', { roughness: 0.8 })
+      );
+      fountainRim.position.y = 0.22;
+      fountainRim.receiveShadow = true;
+      monumentGrp.add(fountainRim);
+
+      const fountainWater = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.2, 2.2, 0.36, 12),
+        lpMat('#3fb4e6', { roughness: 0.18, emissive: '#1e88b8', emissiveIntensity: 0.18 })
+      );
+      fountainWater.position.y = 0.24;
+      monumentGrp.add(fountainWater);
+
+      const towerBase = new THREE.Mesh(
+        new THREE.BoxGeometry(1.5, 2.4, 1.5),
+        lpMat('#8b5a42', { roughness: 0.82 })
+      );
+      towerBase.position.y = 1.2;
+      towerBase.castShadow = true;
+      monumentGrp.add(towerBase);
+
+      const towerShaft = new THREE.Mesh(
+        new THREE.BoxGeometry(1.1, 4.4, 1.1),
+        lpMat('#d9cfc1', { roughness: 0.78 })
+      );
+      towerShaft.position.y = 4.6;
+      towerShaft.castShadow = true;
+      monumentGrp.add(towerShaft);
+
+      // Esferas del reloj en las 4 caras de la torre
+      const clockFaceMat = lpMat('#fff9eb', { emissive: '#ffe9b3', emissiveIntensity: 0.35 });
+      [
+        [0, 5.9, 0.57, 0],
+        [0, 5.9, -0.57, Math.PI],
+        [0.57, 5.9, 0, Math.PI / 2],
+        [-0.57, 5.9, 0, -Math.PI / 2]
+      ].forEach(([cx, cy, cz, ry]) => {
+        const face = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.05, 12), clockFaceMat);
+        face.rotation.x = Math.PI / 2;
+        face.rotation.z = ry;
+        face.position.set(cx, cy, cz);
+        monumentGrp.add(face);
+      });
+
+      const towerRoof = new THREE.Mesh(
+        new THREE.ConeGeometry(1.05, 1.9, 4),
+        lpMat('#2f4f4f', { roughness: 0.6 })
+      );
+      towerRoof.rotation.y = Math.PI / 4;
+      towerRoof.position.y = 7.75;
+      towerRoof.castShadow = true;
+      monumentGrp.add(towerRoof);
+      campusGroup.add(monumentGrp);
+
+      // Arco de bienvenida universitario detrás de la banca principal (z = 16)
+      const archGrp = new THREE.Group();
+      archGrp.position.set(0, 0, 16.5);
+      [-3.8, 3.8].forEach(px => {
+        const col = new THREE.Mesh(new THREE.BoxGeometry(1.1, 5.4, 1.1), lpMat('#8b5a42'));
+        col.position.set(px, 2.7, 0);
+        col.castShadow = true;
+        archGrp.add(col);
+      });
+      const archBeam = new THREE.Mesh(new THREE.BoxGeometry(9.2, 1.1, 1.25), lpMat('#cfd6de'));
+      archBeam.position.y = 5.6;
+      archBeam.castShadow = true;
+      archGrp.add(archBeam);
+      const archTex = createCanvasTex(640, 120, (ctx, w, h) => {
+        ctx.fillStyle = '#1e3554';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = 6;
+        ctx.strokeRect(6, 6, w - 12, h - 12);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 34px Segoe UI, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('UNIVERSIDAD · CAMPUS CENTRAL', w / 2, h / 2);
+      });
+      const archBanner = new THREE.Mesh(
+        new THREE.PlaneGeometry(7.6, 0.9),
+        new THREE.MeshBasicMaterial({ map: archTex.tex, side: THREE.DoubleSide })
+      );
+      archBanner.position.set(0, 5.6, -0.64);
+      archGrp.add(archBanner);
+      campusGroup.add(archGrp);
+
+      // Red amplia de calzadas y senderos conectando facultades y los 6 restaurantes dispersos
+      const pathConfigs = [
+        // Eje principal Norte-Sur (desde Arco Sur hasta Biblioteca Norte y Ramen)
+        { x: 0, z: -6.0, w: 4.2, l: 52, rot: 0 },
+        // Avenida Este-Oeste principal (Burger Oeste <-> Sushi/Smoothie Este)
+        { x: 0, z: -2.5, w: 3.4, l: 54, rot: Math.PI / 2 },
+        // Avenida Norte (Pizza Noroeste <-> Tacos Noreste)
+        { x: 0, z: -21.5, w: 3.2, l: 48, rot: Math.PI / 2 },
+        // Senderos diagonales del Quad hacia esquinas del campus
+        { x: -11.0, z: -15.5, w: 2.6, l: 22, rot: 0.72 },
+        { x: 11.0, z: -15.5, w: 2.6, l: 22, rot: -0.72 },
+        { x: -10.0, z: 6.5, w: 2.6, l: 22, rot: -0.78 },
+        { x: 11.5, z: 2.5, w: 2.6, l: 22, rot: 1.2 }
+      ];
+      pathConfigs.forEach(p => {
+        const pathMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(p.w, 0.06, p.l),
+          lpMat('#8d959e', { roughness: 0.86 })
+        );
+        pathMesh.position.set(p.x, 0.025, p.z);
+        pathMesh.rotation.y = p.rot;
+        pathMesh.receiveShadow = true;
+        campusGroup.add(pathMesh);
+      });
+
+      // Cancha deportiva universitaria / área recreativa en la zona Este-Sur
+      const courtMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(11.5, 0.05, 7.5),
+        lpMat('#3e7cb1', { roughness: 0.85 })
+      );
+      courtMesh.position.set(21.5, 0.025, 13.5);
+      courtMesh.receiveShadow = true;
+      campusGroup.add(courtMesh);
+      const courtLine = new THREE.Mesh(
+        new THREE.BoxGeometry(10.8, 0.06, 0.14),
+        lpMat('#ffffff')
+      );
+      courtLine.position.set(21.5, 0.03, 13.5);
+      campusGroup.add(courtLine);
+
+      // Biciestacionamiento universitario con bicicletas low-poly
+      function createBikeRack(x, z, rotY = 0) {
+        const rack = new THREE.Group();
+        rack.position.set(x, 0, z);
+        rack.rotation.y = rotY;
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.08, 0.08), lpMat('#adb5bd', { metalness: 0.6 }));
+        bar.position.y = 0.45;
+        rack.add(bar);
+        [-1.4, 1.4].forEach(px => {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 0.08), lpMat('#adb5bd'));
+          post.position.set(px, 0.225, 0);
+          rack.add(post);
+        });
+        const bikeCols = ['#e63946', '#2a9d8f', '#f4a261'];
+        for (let b = 0; b < 3; b++) {
+          const bx = -0.9 + b * 0.9;
+          [-0.35, 0.35].forEach(wz => {
+            const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 5, 10), lpMat('#212529'));
+            wheel.rotation.y = Math.PI / 2;
+            wheel.position.set(bx, 0.25, wz);
+            rack.add(wheel);
+          });
+          const frame = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.24, 0.62), lpMat(bikeCols[b]));
+          frame.position.set(bx, 0.44, 0);
+          rack.add(frame);
+        }
+        campusGroup.add(rack);
+      }
+      createBikeRack(-5.2, 4.2, 0.2);
+      createBikeRack(5.6, -15.5, -0.3);
+
+      // --- 7.2 Banca de parque en primer plano (donde está sentado el usuario) ---
+      const benchGroup = new THREE.Group();
+      benchGroup.position.set(0, 0, 4.05);
+
+      const woodMat = lpMat('#7b4f2c', { roughness: 0.82 });
+      const ironMat = lpMat('#242930', { roughness: 0.55, metalness: 0.45 });
+
+      // Tablones del asiento (visibles en la parte inferior si se mira abajo)
+      for (let i = 0; i < 3; i++) {
+        const slat = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.06, 0.16), woodMat);
+        slat.position.set(0, 0.48, -0.22 + i * 0.19);
+        slat.castShadow = true;
+        slat.receiveShadow = true;
+        benchGroup.add(slat);
+      }
+
+      // Respaldo trasero
+      for (let i = 0; i < 2; i++) {
+        const backSlat = new THREE.Mesh(new THREE.BoxGeometry(2.15, 0.15, 0.055), woodMat);
+        backSlat.position.set(0, 0.78 + i * 0.21, 0.36);
+        backSlat.rotation.x = -0.14;
+        backSlat.castShadow = true;
+        benchGroup.add(backSlat);
+      }
+
+      // Patas y reposabrazos laterales visibles en el borde inferior de la vista 1ª persona
+      [-0.98, 0.98].forEach(sideX => {
+        const legFront = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), ironMat);
+        legFront.position.set(sideX, 0.25, -0.24);
+        benchGroup.add(legFront);
+
+        const legBack = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.02, 0.08), ironMat);
+        legBack.position.set(sideX, 0.51, 0.31);
+        benchGroup.add(legBack);
+
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.66), woodMat);
+        arm.position.set(sideX, 0.72, 0.04);
+        arm.castShadow = true;
+        benchGroup.add(arm);
+      });
+      campusGroup.add(benchGroup);
+
+      // --- 7.3 Árboles estilizados Low Poly ---
+      function createLowPolyTree(x, z, scale = 1, tint = '#3f7a4d') {
+        const tree = new THREE.Group();
+        tree.position.set(x, 0, z);
+
+        const trunk = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.16 * scale, 0.28 * scale, 2.2 * scale, 6),
+          lpMat('#5a3d2b', { roughness: 0.9 })
+        );
+        trunk.position.y = 1.1 * scale;
+        trunk.castShadow = true;
+        trunk.receiveShadow = true;
+        tree.add(trunk);
+
+        const crownColors = [tint, '#4f8f59', '#386e47'];
+        const crownConfigs = [
+          { y: 2.55, r: 1.25, x: 0, z: 0 },
+          { y: 3.45, r: 0.95, x: 0.18, z: -0.12 },
+          { y: 4.15, r: 0.65, x: -0.1, z: 0.1 }
+        ];
+        crownConfigs.forEach((c, idx) => {
+          const foliage = new THREE.Mesh(
+            new THREE.IcosahedronGeometry(c.r * scale, 0),
+            lpMat(crownColors[idx % crownColors.length], { roughness: 0.85 })
+          );
+          foliage.position.set(c.x * scale, c.y * scale, c.z * scale);
+          foliage.rotation.set(idx * 0.5, idx * 0.9, 0.2);
+          foliage.castShadow = true;
+          foliage.receiveShadow = true;
+          tree.add(foliage);
+        });
+
+        // Base jardinera alrededor de algunos árboles
+        const planter = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.85 * scale, 0.92 * scale, 0.26, 7),
+          lpMat('#5c6670', { roughness: 0.9 })
+        );
+        planter.position.y = 0.13;
+        planter.receiveShadow = true;
+        tree.add(planter);
+
+        campusGroup.add(tree);
+      }
+
+      const treeCoords = [
+        [-6.8, 1.5, 1.05, '#448a52'],
+        [6.8, 1.5, 1.0, '#4c9458'],
+        [-11.2, 4.5, 1.15, '#3b7c48'],
+        [11.2, 4.5, 1.1, '#4b8f54'],
+        [-14.5, -13.5, 1.2, '#3e804c'],
+        [14.5, -13.5, 1.15, '#529659'],
+        [-8.5, -24.5, 1.25, '#3a7a47'],
+        [9.5, -24.5, 1.2, '#4d9155'],
+        [-28.0, 4.0, 1.3, '#468a50'],
+        [29.0, -7.5, 1.25, '#3f844b'],
+        [-27.5, -14.0, 1.2, '#4b9256'],
+        [28.0, 14.5, 1.25, '#41884e'],
+        [-9.5, 16.0, 1.15, '#488d52'],
+        [9.5, 16.0, 1.15, '#3e7f4a']
+      ];
+      treeCoords.forEach(([x, z, s, c]) => createLowPolyTree(x, z, s, c));
+
+      // --- 7.4 Edificios académicos modernos con ventanales iluminados ---
+      function createAcademicBuilding(x, z, w, h, d, rotY, bodyColor, winTint) {
+        const bldg = new THREE.Group();
+        bldg.position.set(x, 0, z);
+        bldg.rotation.y = rotY;
+
+        const mainBody = new THREE.Mesh(
+          new THREE.BoxGeometry(w, h, d),
+          lpMat(bodyColor, { roughness: 0.82 })
+        );
+        mainBody.position.y = h / 2;
+        mainBody.castShadow = true;
+        mainBody.receiveShadow = true;
+        bldg.add(mainBody);
+
+        // Techo escalonado moderno
+        const roofRim = new THREE.Mesh(
+          new THREE.BoxGeometry(w + 0.5, 0.45, d + 0.5),
+          lpMat('#2e3640', { roughness: 0.7 })
+        );
+        roofRim.position.y = h + 0.22;
+        bldg.add(roofRim);
+
+        const penthouse = new THREE.Mesh(
+          new THREE.BoxGeometry(w * 0.42, 1.5, d * 0.45),
+          lpMat('#3b4552', { roughness: 0.75 })
+        );
+        penthouse.position.set(-w * 0.15, h + 1.15, 0);
+        bldg.add(penthouse);
+
+        // Cuadrícula de ventanales iluminados en la fachada frontal
+        const cols = Math.max(3, Math.floor(w / 2.2));
+        const rows = Math.max(2, Math.floor(h / 2.5));
+        const winMatWarm = lpMat(winTint, {
+          emissive: winTint,
+          emissiveIntensity: 0.55,
+          roughness: 0.3
+        });
+        const winMatCool = lpMat('#89c2d9', {
+          emissive: '#5899b8',
+          emissiveIntensity: 0.4,
+          roughness: 0.3
+        });
+        buildingWindowMats.push(winMatWarm);
+
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const wx = -w * 0.38 + (c / Math.max(1, cols - 1)) * (w * 0.76);
+            const wy = 2.1 + r * ((h - 2.8) / Math.max(1, rows - 1));
+            const isLit = (r + c * 2) % 3 !== 0;
+            const wMesh = new THREE.Mesh(
+              new THREE.PlaneGeometry(1.25, 1.35),
+              isLit ? winMatWarm : winMatCool
+            );
+            wMesh.position.set(wx, wy, d / 2 + 0.03);
+            bldg.add(wMesh);
+          }
+        }
+
+        // Columnata moderna en planta baja
+        const pillarMat = lpMat('#cfd6de', { roughness: 0.75 });
+        for (let i = -1; i <= 1; i++) {
+          const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.6, 0.45), pillarMat);
+          pillar.position.set(i * (w * 0.34), 1.3, d / 2 + 0.75);
+          pillar.castShadow = true;
+          bldg.add(pillar);
+        }
+        const canopy = new THREE.Mesh(
+          new THREE.BoxGeometry(w * 0.85, 0.25, 1.6),
+          lpMat('#343d47', { roughness: 0.6 })
+        );
+        canopy.position.set(0, 2.7, d / 2 + 0.55);
+        bldg.add(canopy);
+
+        campusGroup.add(bldg);
+      }
+
+      // Biblioteca Central Universitaria (Norte)
+      createAcademicBuilding(-1.5, -40.5, 22, 14.0, 9, 0.0, '#728091', '#ffe3a8');
+      // Facultad de Ingeniería y Laboratorios (Oeste)
+      createAcademicBuilding(-35.5, -12.0, 15, 11.5, 8, 1.45, '#5e6d7d', '#ffd78c');
+      // Facultad de Humanidades y Artes (Este)
+      createAcademicBuilding(35.5, -12.0, 15, 11.5, 8, -1.45, '#7a685b', '#ffe7a6');
+      // Pabellón de Ciencias y Aulas (Noroeste lejano)
+      createAcademicBuilding(-28.0, -34.0, 14, 10.5, 7, 0.55, '#647486', '#ffe3a8');
+      // Auditorio y Centro de Estudiantes (Noreste lejano)
+      createAcademicBuilding(28.0, -34.0, 14, 10.5, 7, -0.55, '#6b7785', '#ffd78c');
+      // Edificio Bienestar Universitario (Suroeste)
+      createAcademicBuilding(-32.0, 16.0, 13, 8.5, 7, 2.15, '#687888', '#ffe3a8');
+
+      // --- 7.5 Seis Restaurantes Temáticos Dispersos por Todo el Campus ---
+      const RESTAURANT_SPECS = [
+        {
+          id: 'burger',
+          x: -24.5, z: -2.0, rotY: 1.38,
+          wallColor: '#c94338', trimColor: '#f5efe6',
+          awningA: '#d62828', awningB: '#ffffff',
+          roofStyle: 'diner'
+        },
+        {
+          id: 'pizza',
+          x: -18.5, z: -24.5, rotY: 0.65,
+          wallColor: '#b55d3b', trimColor: '#e9d8a6',
+          awningA: '#2b9348', awningB: '#d62828',
+          roofStyle: 'oven'
+        },
+        {
+          id: 'ramen',
+          x: 3.5, z: -29.5, rotY: -0.06,
+          wallColor: '#362d2a', trimColor: '#d4a373',
+          awningA: '#9b2226', awningB: '#e9c46a',
+          roofStyle: 'izakaya'
+        },
+        {
+          id: 'tacos',
+          x: 22.0, z: -21.5, rotY: -0.78,
+          wallColor: '#e07a38', trimColor: '#ffbe0b',
+          awningA: '#fb5607', awningB: '#06d6a0',
+          roofStyle: 'cantina'
+        },
+        {
+          id: 'smoothie',
+          x: 23.5, z: 4.5, rotY: -1.78,
+          wallColor: '#e8f5f0', trimColor: '#06d6a0',
+          awningA: '#06d6a0', awningB: '#ffd166',
+          roofStyle: 'tiki'
+        },
+        {
+          id: 'sushi',
+          x: -17.5, z: 12.5, rotY: 2.25,
+          wallColor: '#2c3540', trimColor: '#c9a679',
+          awningA: '#1d3557', awningB: '#e63946',
+          roofStyle: 'bento'
+        }
+      ];
+
+      function drawRestaurantSignTex(ctx, w, h, food, isActive) {
+        ctx.clearRect(0, 0, w, h);
+        if (!isActive) {
+          ctx.fillStyle = '#1b2430';
+          ctx.fillRect(0, 0, w, h);
+          ctx.strokeStyle = food.accent;
+          ctx.lineWidth = 6;
+          ctx.strokeRect(8, 8, w - 16, h - 16);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 30px Segoe UI, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${food.emoji} ${food.venue}`, w / 2, h * 0.38);
+          ctx.fillStyle = '#b9d1e6';
+          ctx.font = '20px Segoe UI, sans-serif';
+          ctx.fillText(food.shortName, w / 2, h * 0.72);
+        } else {
+          const grd = ctx.createLinearGradient(0, 0, w, h);
+          grd.addColorStop(0, '#3a1604');
+          grd.addColorStop(1, '#6b2c08');
+          ctx.fillStyle = grd;
+          ctx.fillRect(0, 0, w, h);
+          ctx.strokeStyle = '#ffe066';
+          ctx.lineWidth = 9;
+          ctx.strokeRect(8, 8, w - 16, h - 16);
+          ctx.fillStyle = '#ffe066';
+          ctx.font = 'bold 31px Segoe UI, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${food.emoji} ${food.venue}`, w / 2, h * 0.36);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 21px Segoe UI, sans-serif';
+          ctx.fillText(`★ ¡TU DESTINO AQUÍ! · ${food.shortName.toUpperCase()}`, w / 2, h * 0.72);
+        }
+      }
+
+      RESTAURANT_SPECS.forEach(spec => {
+        const food = FOOD_CATALOG.find(f => f.id === spec.id);
+        const rGrp = new THREE.Group();
+        rGrp.position.set(spec.x, 0, spec.z);
+        rGrp.rotation.y = spec.rotY;
+
+        // Volumen principal del restaurante
+        const body = new THREE.Mesh(
+          new THREE.BoxGeometry(6.2, 4.4, 4.8),
+          lpMat(spec.wallColor, { roughness: 0.78 })
+        );
+        body.position.y = 2.2;
+        body.castShadow = true;
+        body.receiveShadow = true;
+        rGrp.add(body);
+
+        // Cornisa / moldura arquitectónica superior
+        const cornice = new THREE.Mesh(
+          new THREE.BoxGeometry(6.6, 0.36, 5.2),
+          lpMat(spec.trimColor, { roughness: 0.7 })
+        );
+        cornice.position.y = 4.5;
+        cornice.castShadow = true;
+        rGrp.add(cornice);
+
+        // Detalles arquitectónicos distintivos por tipo de comida
+        if (spec.roofStyle === 'diner') {
+          const stripeBand = new THREE.Mesh(
+            new THREE.BoxGeometry(6.3, 0.28, 4.9),
+            lpMat('#ffffff', { roughness: 0.5 })
+          );
+          stripeBand.position.y = 2.95;
+          rGrp.add(stripeBand);
+        } else if (spec.roofStyle === 'oven') {
+          // Chimenea del horno de pizza artesanal
+          const chimney = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.45, 0.62, 2.2, 6),
+            lpMat('#7f4f38')
+          );
+          chimney.position.set(-2.0, 5.4, -0.8);
+          chimney.castShadow = true;
+          rGrp.add(chimney);
+        } else if (spec.roofStyle === 'izakaya') {
+          // Farolillos rojos colgantes en el pórtico de Ramen House
+          [-2.0, 2.0].forEach(lx => {
+            const lantern = new THREE.Mesh(
+              new THREE.SphereGeometry(0.24, 6, 5),
+              lpMat('#ff4d4d', { emissive: '#ff3b30', emissiveIntensity: 0.65 })
+            );
+            lantern.scale.set(0.85, 1.35, 0.85);
+            lantern.position.set(lx, 2.35, 2.9);
+            rGrp.add(lantern);
+          });
+        } else if (spec.roofStyle === 'cantina') {
+          // Banderines triangulares festivos sobre el escaparate de Tacos al Pastor
+          const flagCols = ['#ff006e', '#ffbe0b', '#06d6a0', '#3a86ff', '#fb5607'];
+          for (let f = 0; f < 5; f++) {
+            const flag = new THREE.Mesh(
+              new THREE.ConeGeometry(0.24, 0.38, 3),
+              lpMat(flagCols[f])
+            );
+            flag.rotation.x = Math.PI;
+            flag.position.set(-2.0 + f * 1.0, 2.42, 3.15);
+            rGrp.add(flag);
+          }
+        } else if (spec.roofStyle === 'tiki') {
+          // Techo inclinado tropical para Smoothie Bar
+          const tikiRoof = new THREE.Mesh(
+            new THREE.ConeGeometry(4.3, 1.5, 4),
+            lpMat('#d4a359')
+          );
+          tikiRoof.rotation.y = Math.PI / 4;
+          tikiRoof.position.y = 5.35;
+          tikiRoof.castShadow = true;
+          rGrp.add(tikiRoof);
+        } else if (spec.roofStyle === 'bento') {
+          // Listones de madera estilo japonés a los costados
+          [-2.6, 2.6].forEach(sx => {
+            const slat = new THREE.Mesh(
+              new THREE.BoxGeometry(0.65, 4.2, 0.16),
+              lpMat('#c9a679')
+            );
+            slat.position.set(sx, 2.1, 2.46);
+            rGrp.add(slat);
+          });
+        }
+
+        // Escaparate frontal luminoso
+        const glassMat = lpMat('#fff5e0', {
+          emissive: '#ffd28a',
+          emissiveIntensity: 0.25,
+          roughness: 0.2
+        });
+        const storefrontGlass = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.95), glassMat);
+        storefrontGlass.position.set(0, 1.15, 2.43);
+        rGrp.add(storefrontGlass);
+
+        // Toldo a rayas
+        const awning = new THREE.Group();
+        awning.position.set(0, 2.45, 2.85);
+        awning.rotation.x = 0.28;
+        for (let i = 0; i < 6; i++) {
+          const stripe = new THREE.Mesh(
+            new THREE.BoxGeometry(0.86, 0.12, 1.1),
+            lpMat(i % 2 === 0 ? spec.awningA : spec.awningB, { roughness: 0.75 })
+          );
+          stripe.position.x = -2.15 + i * 0.86;
+          stripe.castShadow = true;
+          awning.add(stripe);
+        }
+        rGrp.add(awning);
+
+        // Mesita exterior frente al restaurante
+        const tblTop = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.45, 0.45, 0.07, 8),
+          lpMat(spec.trimColor)
+        );
+        tblTop.position.set(1.9, 0.72, 3.65);
+        tblTop.castShadow = true;
+        rGrp.add(tblTop);
+        const tblLeg = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.05, 0.15, 0.72, 6),
+          lpMat('#2c3038')
+        );
+        tblLeg.position.set(1.9, 0.36, 3.65);
+        rGrp.add(tblLeg);
+
+        // Letrero dinámico en fachada (visible de día, encendido brillante al elegir este plato)
+        const signTexObj = createCanvasTex(512, 160, (ctx, w, h) => {
+          drawRestaurantSignTex(ctx, w, h, food, false);
+        });
+        const signMat = new THREE.MeshStandardMaterial({
+          map: signTexObj.tex,
+          emissiveMap: signTexObj.tex,
+          emissive: new THREE.Color('#ffffff'),
+          emissiveIntensity: 0.25,
+          roughness: 0.35
+        });
+        const storefrontSign = new THREE.Mesh(
+          new THREE.BoxGeometry(4.8, 1.18, 0.24),
+          [
+            lpMat('#1f2630'), lpMat('#1f2630'),
+            lpMat('#1f2630'), lpMat('#1f2630'),
+            signMat, lpMat('#1f2630')
+          ]
+        );
+        storefrontSign.position.set(0, 3.45, 2.54);
+        rGrp.add(storefrontSign);
+
+        // Pedestal superior donde se colocará la escultura 3D gigante del platillo
+        const roofPedestal = new THREE.Group();
+        roofPedestal.position.set(0, spec.roofStyle === 'tiki' ? 6.15 : 5.35, 0.6);
+        rGrp.add(roofPedestal);
+
+        // Luz puntual + faro luminoso vertical que se encienden en Estado 4 para el elegido
+        const signLight = new THREE.PointLight(food.accent, 0, 15, 1.5);
+        signLight.position.set(0, 3.4, 4.2);
+        rGrp.add(signLight);
+
+        const beaconMat = new THREE.MeshBasicMaterial({
+          color: food.accent,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          side: THREE.DoubleSide,
+          depthWrite: false
+        });
+        const beaconBeam = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.35, 0.85, 12, 10, 1, true),
+          beaconMat
+        );
+        beaconBeam.position.set(0, 9.5, 0.6);
+        rGrp.add(beaconBeam);
+
+        campusGroup.add(rGrp);
+
+        // Coordenada mundial de entrada al local para trazar la ruta GPS
+        const entrancePos = new THREE.Vector3(0, 0.12, 3.6);
+        rGrp.updateMatrixWorld(true);
+        rGrp.localToWorld(entrancePos);
+
+        restaurantsMap[spec.id] = {
+          food,
+          group: rGrp,
+          signTexObj,
+          signMat,
+          signLight,
+          beaconMat,
+          roofPedestal,
+          roofSculpture: null,
+          entrancePos,
+          worldPos: new THREE.Vector3(spec.x, 2.4, spec.z)
+        };
+      });
+
+      // --- 7.6 Farolas encendidas a lo largo de la plaza ---
+      function createStreetLamp(x, z, withPointLight = false) {
+        const lamp = new THREE.Group();
+        lamp.position.set(x, 0, z);
+
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.06, 0.1, 4.1, 6),
+          lpMat('#28303b', { metalness: 0.5, roughness: 0.5 })
+        );
+        pole.position.y = 2.05;
+        pole.castShadow = true;
+        lamp.add(pole);
+
+        const arm = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7, 0.08, 0.08),
+          lpMat('#28303b', { metalness: 0.5 })
+        );
+        arm.position.set(0.32, 4.05, 0);
+        lamp.add(arm);
+
+        const bulbMat = lpMat('#ffe4a0', {
+          emissive: '#ffbd59',
+          emissiveIntensity: 1.4,
+          roughness: 0.2
+        });
+        lampBulbs.push(bulbMat);
+
+        const bulb = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), bulbMat);
+        bulb.position.set(0.62, 3.92, 0);
+        lamp.add(bulb);
+
+        if (withPointLight) {
+          const pLight = new THREE.PointLight('#ffbd66', 0.75, 11, 1.7);
+          pLight.position.set(0.62, 3.7, 0);
+          lamp.add(pLight);
+        }
+
+        campusGroup.add(lamp);
+      }
+
+      [
+        [-3.4, 2.0, true],
+        [3.4, 2.0, true],
+        [-4.2, -14.5, false],
+        [4.2, -14.5, true],
+        [-14.5, -2.5, true],
+        [14.5, -2.5, true],
+        [-12.5, -20.5, false],
+        [12.5, -20.5, false],
+        [-3.4, 11.5, false],
+        [3.4, 11.5, false]
+      ].forEach(([x, z, lit]) => createStreetLamp(x, z, lit));
+
+      // --- 7.7 Siluetas Low Poly de estudiantes caminando por la plaza ---
+      const jacketColors = ['#3b5998', '#8c3b4a', '#3d7068', '#6d597a', '#4a5759', '#9c6644'];
+      function createStudentWalker(pathA, pathB, speed, phaseOffset, color) {
+        const grp = new THREE.Group();
+        const bodyMat = lpMat(color, { roughness: 0.85 });
+        const skinMat = lpMat('#d9a78b', { roughness: 0.8 });
+        const pantsMat = lpMat('#242b35', { roughness: 0.9 });
+
+        const torso = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.58, 0.24), bodyMat);
+        torso.position.y = 1.08;
+        torso.castShadow = true;
+        grp.add(torso);
+
+        const backpack = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.42, 0.16), lpMat('#2e3440'));
+        backpack.position.set(0, 1.08, -0.18);
+        grp.add(backpack);
+
+        const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.18, 0), skinMat);
+        head.position.y = 1.56;
+        head.castShadow = true;
+        grp.add(head);
+
+        const legL = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.68, 0.16), pantsMat);
+        legL.position.set(-0.11, 0.36, 0);
+        grp.add(legL);
+
+        const legR = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.68, 0.16), pantsMat);
+        legR.position.set(0.11, 0.36, 0);
+        grp.add(legR);
+
+        const armL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.12), bodyMat);
+        armL.position.set(-0.29, 1.04, 0);
+        grp.add(armL);
+
+        const armR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.12), bodyMat);
+        armR.position.set(0.29, 1.04, 0);
+        grp.add(armR);
+
+        campusGroup.add(grp);
+        students.push({
+          grp, legL, legR, armL, armR,
+          a: new THREE.Vector3(pathA[0], 0, pathA[1]),
+          b: new THREE.Vector3(pathB[0], 0, pathB[1]),
+          speed,
+          phase: phaseOffset
+        });
+      }
+
+      const walkerRoutes = [
+        [[-22.0, -2.5], [20.0, -2.5], 0.055, 0.1],
+        [[0, -28.0], [0, 12.0], 0.05, 0.42],
+        [[-16.0, -21.5], [18.0, -21.5], 0.06, 0.72],
+        [[18.0, 4.5], [-12.0, 10.0], 0.052, 0.25],
+        [[-16.0, -21.0], [-4.0, -4.0], 0.065, 0.58],
+        [[19.0, -19.0], [5.0, -3.5], 0.06, 0.88],
+        [[-24.0, -10.0], [-6.0, -16.0], 0.058, 0.33],
+        [[24.0, -10.0], [6.0, -16.0], 0.058, 0.61],
+        [[-8.0, 12.0], [16.0, 10.0], 0.054, 0.15],
+        [[2.5, -26.0], [-14.0, -12.0], 0.062, 0.79]
+      ];
+      walkerRoutes.forEach((r, idx) => {
+        createStudentWalker(r[0], r[1], r[2], r[3], jacketColors[idx % jacketColors.length]);
+      });
+
+      return { drawRestaurantSignTex };
+    }
+
+    const campusRefs = buildCampusPlaza();
+
+    /* =========================================================================
+       8. MODELO 3D DEL SMARTPHONE EN PRIMER PLANO Y ESTELA DE LUZ HOLOGRÁFICA
+       ========================================================================= */
+    const phoneGroup = new THREE.Group();
+    phoneGroup.position.set(0, -0.34, -0.92);
+    phoneGroup.rotation.set(-0.38, 0.04, 0);
+    handRig.add(phoneGroup);
+
+    // Cuerpo del smartphone low poly
+    const phoneBody = new THREE.Mesh(
+      new THREE.BoxGeometry(0.26, 0.5, 0.024),
+      lpMat('#171c24', { metalness: 0.65, roughness: 0.35 })
+    );
+    phoneBody.castShadow = true;
+    phoneGroup.add(phoneBody);
+
+    // Bisel luminoso lateral
+    const phoneEdge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(0.264, 0.504, 0.026)),
+      new THREE.LineBasicMaterial({ color: '#456078', transparent: true, opacity: 0.7 })
+    );
+    phoneGroup.add(phoneEdge);
+
+    // Pantalla dinámica del smartphone (CanvasTexture)
+    const phoneScreenCanvas = createCanvasTex(256, 480, () => {});
+    const phoneScreenMat = new THREE.MeshBasicMaterial({ map: phoneScreenCanvas.tex });
+    const phoneScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.23, 0.46), phoneScreenMat);
+    phoneScreen.position.z = 0.0135;
+    phoneGroup.add(phoneScreen);
+
+    function drawPhoneScreen(mode, extraText = '', scrollT = 0) {
+      const { ctx, cv, tex } = phoneScreenCanvas;
+      const w = cv.width, h = cv.height;
+      ctx.clearRect(0, 0, w, h);
+
+      if (mode === STATES.CAMPUS_EXPLORE) {
+        // Pantalla saturada de scroll infinito y notificaciones académicas constantes
+        const grd = ctx.createLinearGradient(0, 0, 0, h);
+        grd.addColorStop(0, '#0f1b2b');
+        grd.addColorStop(1, '#182436');
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, 0, w, h);
+
+        // Barra superior saturada
+        ctx.fillStyle = '#1b2d45';
+        ctx.fillRect(0, 0, w, 48);
+        ctx.fillStyle = '#ff5c5c';
+        ctx.font = 'bold 16px Segoe UI, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('99+ NOTIFICACIONES', 14, 30);
+
+        // Bloques de feed desplazándose rápidamente hacia arriba (scroll infinito)
+        const feedItems = [
+          { t: 'URGENTE · LMS', b: 'Entrega Tesis 23:59', c: '#ff4d6d' },
+          { t: 'CORREO (47)', b: 'Revisión rúbrica hoy', c: '#ff9f1c' },
+          { t: 'CHAT GRUPO', b: '¿Quién tiene la parte 3?', c: '#4ea8de' },
+          { t: 'CALENDARIO', b: 'Examen Parcial 07:00', c: '#ffd166' },
+          { t: 'AVISO CAMPUS', b: 'Lectura 84 págs.', c: '#72efdd' },
+          { t: 'RED SOCIAL', b: 'Tendencias (1.2k)', c: '#c77dff' }
+        ];
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(8, 52, w - 16, h - 60);
+        ctx.clip();
+
+        const itemH = 74;
+        const totalH = feedItems.length * itemH;
+        const offset = (scrollT * 170) % totalH;
+        for (let pass = 0; pass < 2; pass++) {
+          feedItems.forEach((it, idx) => {
+            const y = 56 + idx * itemH - offset + pass * totalH;
+            if (y > 0 && y < h) {
+              ctx.fillStyle = 'rgba(25, 39, 58, 0.95)';
+              ctx.fillRect(14, y, w - 28, itemH - 8);
+              ctx.fillStyle = it.c;
+              ctx.fillRect(14, y, 5, itemH - 8);
+              ctx.font = 'bold 14px Segoe UI, sans-serif';
+              ctx.fillText(it.t, 28, y + 24);
+              ctx.fillStyle = '#e2eef8';
+              ctx.font = '15px Segoe UI, sans-serif';
+              ctx.fillText(it.b, 28, y + 48);
+            }
+          });
+        }
+        ctx.restore();
+
+        ctx.strokeStyle = '#4ea8de';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(4, 4, w - 8, h - 8);
+      } else if (mode === STATES.ALERT_SCROLL) {
+        const grd = ctx.createLinearGradient(0, 0, 0, h);
+        grd.addColorStop(0, '#2a090d');
+        grd.addColorStop(1, '#12080e');
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.strokeStyle = '#ff4d4d';
+        ctx.lineWidth = 6;
+        ctx.strokeRect(10, 10, w - 20, h - 20);
+
+        ctx.fillStyle = '#ffb020';
+        ctx.font = 'bold 24px Segoe UI, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚠ ALERTA', w / 2, 72);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '18px Segoe UI, sans-serif';
+        ctx.fillText('6h sin alimento', w / 2, 120);
+        ctx.fillText('Hipoglucemia', w / 2, 148);
+        ctx.fillText('Fatiga cognitiva', w / 2, 176);
+
+        ctx.fillStyle = '#ff6b35';
+        ctx.fillRect(36, 360, w - 72, 54);
+        ctx.fillStyle = '#120500';
+        ctx.font = 'bold 19px Segoe UI, sans-serif';
+        ctx.fillText('CONTINUAR', w / 2, 394);
+      } else if (mode === STATES.MENU_3D) {
+        ctx.fillStyle = '#071b28';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#00f5ff';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(10, 10, w - 20, h - 20);
+        ctx.fillStyle = '#00f5ff';
+        ctx.font = 'bold 22px Segoe UI, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('PROYECTOR AR', w / 2, 90);
+        ctx.fillStyle = '#c4f5ff';
+        ctx.font = '17px Segoe UI, sans-serif';
+        ctx.fillText('Menú 3D activo', w / 2, 140);
+        ctx.fillText('Selecciona platillo', w / 2, 170);
+      } else if (mode === STATES.HOLOGRAM_EAT) {
+        ctx.fillStyle = '#0b1a24';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#ffbe3b';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(10, 10, w - 20, h - 20);
+        ctx.fillStyle = '#ffbe3b';
+        ctx.font = 'bold 21px Segoe UI, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('HOLOGRAMA ACTIVO', w / 2, 95);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '17px Segoe UI, sans-serif';
+        ctx.fillText(extraText || 'Interacción [C]', w / 2, 155);
+      } else {
+        ctx.fillStyle = '#1a1106';
+        ctx.fillRect(0, 0, w, h);
+        ctx.strokeStyle = '#ff9f1c';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(10, 10, w - 20, h - 20);
+        ctx.fillStyle = '#ffe066';
+        ctx.font = 'bold 22px Segoe UI, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('RUTA GPS AR', w / 2, 90);
+        ctx.fillStyle = '#ffd6a5';
+        ctx.font = 'bold 20px Segoe UI, sans-serif';
+        ctx.fillText('85m · 1 min', w / 2, 155);
+        ctx.font = '16px Segoe UI, sans-serif';
+        ctx.fillText(extraText || 'Cafetería', w / 2, 200);
+      }
+      tex.needsUpdate = true;
+    }
+
+    // Estela de luz volumétrica proyectada desde la pantalla directamente hacia los hologramas
+    const holoBeamGroup = new THREE.Group();
+    holoBeamGroup.position.set(0, -0.31, -0.89);
+    handRig.add(holoBeamGroup);
+
+    const beamGeo = new THREE.ConeGeometry(0.76, 1.42, 28, 1, true);
+    beamGeo.translate(0, -0.71, 0);
+    beamGeo.rotateX(-Math.PI / 2); // Punta en (0,0,0) y abertura hacia +Z para alinear con lookAt()
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: '#00f5ff',
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    const holoBeam = new THREE.Mesh(beamGeo, beamMat);
+    holoBeamGroup.add(holoBeam);
+
+    // Núcleo interno más brillante de la estela de luz
+    const innerBeamGeo = new THREE.ConeGeometry(0.38, 1.38, 20, 1, true);
+    innerBeamGeo.translate(0, -0.69, 0);
+    innerBeamGeo.rotateX(-Math.PI / 2);
+    const innerBeamMat = new THREE.MeshBasicMaterial({
+      color: '#ffffff',
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    const holoBeamInner = new THREE.Mesh(innerBeamGeo, innerBeamMat);
+    holoBeamGroup.add(holoBeamInner);
+
+    // Anillo emisor al frente de la estela donde se materializan los hologramas
+    const holoEmitterRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.48, 0.56, 28),
+      new THREE.MeshBasicMaterial({
+        color: '#00f5ff',
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      })
+    );
+    holoEmitterRing.rotation.x = Math.PI / 2;
+    holoEmitterRing.position.set(0, -0.36, -2.35);
+    handRig.add(holoEmitterRing);
+
+    /* =========================================================================
+       9. ESTADO 1: VENTANA DE ALERTA 3D Y RUIDO INFORMATIVO CAÓTICO
+       ========================================================================= */
+    const alert3DGroup = new THREE.Group();
+    alert3DGroup.position.set(0, -0.06, -1.16);
+    handRig.add(alert3DGroup);
+
+    // Panel flotante 3D de alerta médica crítica emergiendo sobre el teléfono
+    const alert3DTex = createCanvasTex(768, 320, (ctx, w, h) => {
+      const grd = ctx.createLinearGradient(0, 0, w, h);
+      grd.addColorStop(0, 'rgba(54, 10, 14, 0.96)');
+      grd.addColorStop(1, 'rgba(28, 12, 16, 0.96)');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = '#ff4d4d';
+      ctx.lineWidth = 10;
+      ctx.strokeRect(8, 8, w - 16, h - 16);
+
+      ctx.fillStyle = '#ffb020';
+      ctx.font = 'bold 26px Segoe UI, sans-serif';
+      ctx.fillText('⚠ ALERTA MÉDICA CRÍTICA', 34, 54);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '24px Segoe UI, sans-serif';
+      ctx.fillText('ALERTA DE SALUD: 6 horas sin ingerir alimentos.', 34, 106);
+      ctx.fillText('Riesgo de fatiga cognitiva, hipoglucemia', 34, 142);
+      ctx.fillText('y bajo rendimiento académico.', 34, 178);
+
+      // Botón dibujado dentro del panel 3D
+      ctx.fillStyle = '#ff8811';
+      ctx.fillRect(220, 224, 328, 62);
+      ctx.fillStyle = '#1a0a02';
+      ctx.font = 'bold 26px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Ignorar / Continuar', w / 2, 263);
+    });
+
+    const alert3DCardMat = new THREE.MeshBasicMaterial({
+      map: alert3DTex.tex,
+      transparent: true,
+      opacity: 0.96
+    });
+    const alert3DCard = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 0.385), alert3DCardMat);
+    alert3DGroup.add(alert3DCard);
+
+    // Borde pulsante independiente en 3D
+    const alertBorderMat = new THREE.LineBasicMaterial({ color: '#ff4d4d' });
+    const alertBorder = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.PlaneGeometry(0.94, 0.405)),
+      alertBorderMat
+    );
+    alertBorder.position.z = 0.005;
+    alert3DGroup.add(alertBorder);
+
+    // Contenedor de bloques de texto caóticos volando alrededor del teléfono
+    const noiseGroup = new THREE.Group();
+    handRig.add(noiseGroup);
+    const noiseCards = [];
+
+    const NOISE_MESSAGES = [
+      { tag: 'CORREO', msg: '47 correos sin leer', col: '#ff5c5c' },
+      { tag: 'TAREA', msg: 'Entrega Proyecto: 23:59', col: '#ff9f1c' },
+      { tag: 'LMS', msg: 'Parcial mañana 07:00 AM', col: '#ff4d6d' },
+      { tag: 'CHAT', msg: 'Grupo Tesis (99+ msgs)', col: '#4ea8de' },
+      { tag: 'AVISO', msg: 'Lectura obligatoria p.1-84', col: '#ffd166' },
+      { tag: 'CALENDARIO', msg: 'Reunión laboratorio HOY', col: '#a8dadc' },
+      { tag: 'SISTEMA', msg: 'Batería social: 11%', col: '#f77f00' },
+      { tag: 'FORO', msg: 'Nueva rúbrica actualizada', col: '#72efdd' },
+      { tag: 'RECORDATORIO', msg: 'Sin descanso hace 6h', col: '#ff6b6b' },
+      { tag: 'NOTIFICACIÓN', msg: 'Pendiente: Informe Final', col: '#fcbf49' }
+    ];
+
+    function buildNoiseVortex() {
+      for (let i = 0; i < 32; i++) {
+        const item = NOISE_MESSAGES[i % NOISE_MESSAGES.length];
+        const texObj = createCanvasTex(320, 96, (ctx, w, h) => {
+          ctx.fillStyle = 'rgba(14, 22, 34, 0.88)';
+          ctx.fillRect(0, 0, w, h);
+          ctx.strokeStyle = item.col;
+          ctx.lineWidth = 4;
+          ctx.strokeRect(4, 4, w - 8, h - 8);
+          ctx.fillStyle = item.col;
+          ctx.font = 'bold 17px Segoe UI, sans-serif';
+          ctx.fillText(item.tag, 16, 32);
+          ctx.fillStyle = '#e5eef7';
+          ctx.font = '19px Segoe UI, sans-serif';
+          ctx.fillText(item.msg, 16, 66);
+        });
+
+        const mesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.68, 0.21),
+          new THREE.MeshBasicMaterial({
+            map: texObj.tex,
+            transparent: true,
+            opacity: 0.9,
+            side: THREE.DoubleSide
+          })
+        );
+
+        const angle = (i / 32) * Math.PI * 2 * 2.5;
+        const radius = 0.68 + (i % 5) * 0.22;
+        mesh.position.set(
+          Math.cos(angle) * radius,
+          -0.9 + (i % 8) * 0.35,
+          -1.35 + Math.sin(angle) * radius * 0.7
+        );
+        mesh.lookAt(0, mesh.position.y, 0);
+        noiseGroup.add(mesh);
+
+        noiseCards.push({
+          mesh,
+          angle,
+          radius,
+          speedY: 1.65 + (i % 6) * 0.35,
+          angSpeed: (i % 2 === 0 ? 1 : -1) * (0.9 + (i % 4) * 0.25),
+          baseScale: 0.85 + (i % 3) * 0.14
+        });
+      }
+    }
+    buildNoiseVortex();
+
+    /* =========================================================================
+       10. FÁBRICA PROCEDURAL DE ESCULTURAS LOW POLY 3D DE COMIDA (5 MORDISCOS)
+       ========================================================================= */
+    /**
+     * Construye cualquier platillo del catálogo con geometría procedural Low Poly.
+     * Devuelve { root, biteGroups } donde biteGroups tiene 5 grupos ordenados
+     * que se consumen progresivamente en 5 pulsaciones de la tecla [C].
+     */
+    function createFoodSculpture(foodId, isMini = false) {
+      const root = new THREE.Group();
+      const biteGroups = [[], [], [], [], []];
+
+      function addPart(mesh, biteStage = 4) {
+        mesh.castShadow = !isMini;
+        mesh.receiveShadow = !isMini;
+        root.add(mesh);
+        biteGroups[biteStage].push(mesh);
+        return mesh;
+      }
+
+      if (foodId === 'burger') {
+        // 1) Pan inferior (Mordisco 5)
+        const bottomBun = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.42, 0.39, 0.12, 9),
+          lpMat('#d9944a')
+        );
+        bottomBun.position.y = -0.22;
+        addPart(bottomBun, 4);
+
+        // 2) Primera carne + queso inferior (Mordisco 4)
+        const patty1 = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.43, 0.43, 0.1, 10),
+          lpMat('#6b341e')
+        );
+        patty1.position.y = -0.11;
+        addPart(patty1, 3);
+
+        const cheese1 = new THREE.Mesh(
+          new THREE.BoxGeometry(0.68, 0.035, 0.68),
+          lpMat('#ffcc29', { emissive: '#ff9900', emissiveIntensity: 0.12 })
+        );
+        cheese1.position.y = -0.045;
+        cheese1.rotation.y = 0.35;
+        addPart(cheese1, 3);
+
+        // 3) Lechuga rizada y tomate (Mordisco 3)
+        for (let i = 0; i < 6; i++) {
+          const leaf = new THREE.Mesh(
+            new THREE.DodecahedronGeometry(0.14, 0),
+            lpMat('#52b749')
+          );
+          const a = (i / 6) * Math.PI * 2;
+          leaf.scale.set(1.3, 0.35, 1.1);
+          leaf.position.set(Math.cos(a) * 0.28, 0.02, Math.sin(a) * 0.28);
+          addPart(leaf, 2);
+        }
+        const tomato = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.36, 0.36, 0.045, 9),
+          lpMat('#e63946')
+        );
+        tomato.position.y = 0.06;
+        addPart(tomato, 2);
+
+        // 4) Segunda carne + queso superior (Mordisco 2)
+        const patty2 = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.43, 0.43, 0.1, 10),
+          lpMat('#5e2c18')
+        );
+        patty2.position.y = 0.135;
+        addPart(patty2, 1);
+
+        const cheese2 = new THREE.Mesh(
+          new THREE.BoxGeometry(0.68, 0.035, 0.68),
+          lpMat('#ffd13b', { emissive: '#ff9f1c', emissiveIntensity: 0.14 })
+        );
+        cheese2.position.y = 0.2;
+        cheese2.rotation.y = 0.85;
+        addPart(cheese2, 1);
+
+        // 5) Pan superior con semillas de sésamo (Mordisco 1)
+        const topBun = new THREE.Mesh(
+          new THREE.SphereGeometry(0.42, 9, 5, 0, Math.PI * 2, 0, Math.PI * 0.54),
+          lpMat('#e39c4f')
+        );
+        topBun.position.y = 0.22;
+        addPart(topBun, 0);
+
+        for (let i = 0; i < 9; i++) {
+          const seed = new THREE.Mesh(
+            new THREE.BoxGeometry(0.035, 0.02, 0.02),
+            lpMat('#fff3d1')
+          );
+          const a = i * 1.15;
+          const r = 0.12 + (i % 3) * 0.08;
+          seed.position.set(Math.cos(a) * r, 0.43 - r * 0.35, Math.sin(a) * r);
+          seed.rotation.y = a;
+          addPart(seed, 0);
+        }
+      } else if (foodId === 'pizza') {
+        // 5 rebanadas triangulares sólidas de pizza artesanal pepperoni (1 rebanada por mordisco)
+        const sliceCount = 5;
+        const sliceAngle = (Math.PI * 2) / sliceCount;
+        const sliceShape = new THREE.Shape();
+        const sliceR = 0.48;
+        const halfA = sliceAngle * 0.45;
+        sliceShape.moveTo(0, 0);
+        sliceShape.lineTo(Math.sin(-halfA) * sliceR, Math.cos(-halfA) * sliceR);
+        sliceShape.lineTo(Math.sin(halfA) * sliceR, Math.cos(halfA) * sliceR);
+        sliceShape.closePath();
+
+        const sliceGeo = new THREE.ExtrudeGeometry(sliceShape, {
+          depth: 0.05,
+          bevelEnabled: true,
+          bevelThickness: 0.008,
+          bevelSize: 0.008,
+          bevelSegments: 1
+        });
+        sliceGeo.rotateX(Math.PI / 2);
+
+        for (let s = 0; s < sliceCount; s++) {
+          const sliceGrp = new THREE.Group();
+          sliceGrp.rotation.y = s * sliceAngle;
+
+          // Triángulo de queso fundido
+          const cheeseSlice = new THREE.Mesh(
+            sliceGeo,
+            lpMat('#f7b538', { emissive: '#ff9f1c', emissiveIntensity: 0.1 })
+          );
+          cheeseSlice.position.y = 0.04;
+          sliceGrp.add(cheeseSlice);
+
+          // Borde dorado crujiente de masa
+          const crust = new THREE.Mesh(
+            new THREE.BoxGeometry(0.46, 0.085, 0.1),
+            lpMat('#d4843a')
+          );
+          crust.position.set(0, 0.025, 0.42);
+          sliceGrp.add(crust);
+
+          // Rodajas de pepperoni y hoja de albahaca
+          const pep1 = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.065, 0.065, 0.024, 7),
+            lpMat('#c1292e')
+          );
+          pep1.position.set(0.045, 0.058, 0.21);
+          sliceGrp.add(pep1);
+
+          const pep2 = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.052, 0.052, 0.024, 7),
+            lpMat('#b51d24')
+          );
+          pep2.position.set(-0.065, 0.058, 0.3);
+          sliceGrp.add(pep2);
+
+          const basil = new THREE.Mesh(
+            new THREE.BoxGeometry(0.06, 0.015, 0.04),
+            lpMat('#38b000')
+          );
+          basil.position.set(0.02, 0.062, 0.31);
+          basil.rotation.y = 0.4;
+          sliceGrp.add(basil);
+
+          root.add(sliceGrp);
+          biteGroups[s].push(sliceGrp);
+        }
+        root.rotation.x = 0.34;
+      } else if (foodId === 'ramen') {
+        // Mordisco 5: Tazón cerámico y palillos
+        const bowl = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.48, 0.24, 0.34, 10),
+          lpMat('#263242', { roughness: 0.45 })
+        );
+        bowl.position.y = -0.08;
+        addPart(bowl, 4);
+
+        const bowlRim = new THREE.Mesh(
+          new THREE.TorusGeometry(0.47, 0.032, 6, 12),
+          lpMat('#d64545')
+        );
+        bowlRim.rotation.x = Math.PI / 2;
+        bowlRim.position.y = 0.09;
+        addPart(bowlRim, 4);
+
+        for (let c = 0; c < 2; c++) {
+          const stick = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.012, 0.022, 0.85, 5),
+            lpMat('#d4a373')
+          );
+          stick.rotation.z = Math.PI / 2 - 0.08;
+          stick.rotation.y = 0.22 + c * 0.09;
+          stick.position.set(0.05, 0.16 + c * 0.02, 0.26);
+          addPart(stick, 4);
+        }
+
+        // Mordisco 4: Caldo ámbar dorado
+        const broth = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.43, 0.43, 0.05, 10),
+          lpMat('#e08e36', { emissive: '#ff8800', emissiveIntensity: 0.2 })
+        );
+        broth.position.y = 0.05;
+        addPart(broth, 3);
+
+        // Mordisco 3: Fideos ondulados
+        for (let n = 0; n < 4; n++) {
+          const noodle = new THREE.Mesh(
+            new THREE.TorusGeometry(0.14 + n * 0.055, 0.028, 5, 10),
+            lpMat('#ffe18c')
+          );
+          noodle.rotation.x = Math.PI / 2 + (n % 2) * 0.14;
+          noodle.position.y = 0.09;
+          addPart(noodle, 2);
+        }
+
+        // Mordisco 2: Huevo Ajitama partido y cebollín verde
+        const eggWhite = new THREE.Mesh(
+          new THREE.SphereGeometry(0.11, 7, 5),
+          lpMat('#fff9ec')
+        );
+        eggWhite.scale.set(1.2, 0.55, 0.9);
+        eggWhite.position.set(-0.18, 0.12, 0.1);
+        addPart(eggWhite, 1);
+
+        const yolk = new THREE.Mesh(
+          new THREE.SphereGeometry(0.06, 6, 5),
+          lpMat('#ff9f1c', { emissive: '#ff7700', emissiveIntensity: 0.2 })
+        );
+        yolk.position.set(-0.18, 0.145, 0.1);
+        addPart(yolk, 1);
+
+        for (let g = 0; g < 5; g++) {
+          const scallion = new THREE.Mesh(
+            new THREE.TorusGeometry(0.03, 0.012, 4, 6),
+            lpMat('#52b788')
+          );
+          scallion.rotation.x = Math.PI / 2;
+          scallion.position.set(-0.05 + g * 0.05, 0.14, -0.05 + (g % 2) * 0.08);
+          addPart(scallion, 1);
+        }
+
+        // Mordisco 1: Láminas de Chashu y Narutomaki
+        for (let p = 0; p < 2; p++) {
+          const chashu = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.12, 0.12, 0.035, 7),
+            lpMat('#a85d44')
+          );
+          chashu.position.set(0.16 - p * 0.07, 0.13 + p * 0.02, -0.1 + p * 0.12);
+          chashu.rotation.x = 0.3;
+          addPart(chashu, 0);
+        }
+
+        const naruto = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.075, 0.075, 0.03, 8),
+          lpMat('#fff0f5')
+        );
+        naruto.position.set(0.18, 0.15, 0.14);
+        addPart(naruto, 0);
+      } else if (foodId === 'tacos') {
+        // Mordisco 5: Plato artesanal y mitades de limón
+        const plate = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.54, 0.44, 0.05, 10),
+          lpMat('#e8dfd1')
+        );
+        plate.position.y = -0.18;
+        addPart(plate, 4);
+
+        const lime = new THREE.Mesh(
+          new THREE.SphereGeometry(0.09, 6, 5, 0, Math.PI),
+          lpMat('#6bbf3d')
+        );
+        lime.position.set(0.32, -0.11, 0.22);
+        addPart(lime, 4);
+
+        // 3 Tacos al pastor + trozos de piña asada (Mordiscos 1..4)
+        function createSingleTaco(x, z, rotY, stageFill, stageShell) {
+          // Tortilla doblada en forma de U abierta hacia arriba
+          const shell = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.16, 0.16, 0.44, 8, 1, true, 0, Math.PI),
+            lpMat('#f4c85c', { side: THREE.DoubleSide })
+          );
+          shell.rotation.z = -Math.PI / 2;
+          shell.rotation.y = rotY;
+          shell.position.set(x, 0.02, z);
+          addPart(shell, stageShell);
+
+          // Relleno de carne al pastor adobada
+          for (let m = 0; m < 4; m++) {
+            const meat = new THREE.Mesh(
+              new THREE.DodecahedronGeometry(0.075, 0),
+              lpMat('#c44522')
+            );
+            meat.position.set(x + (m - 1.5) * 0.08 * Math.cos(rotY), 0.05, z + (m - 1.5) * 0.08 * Math.sin(rotY));
+            addPart(meat, stageFill);
+          }
+
+          // Piña y cilantro
+          for (let k = 0; k < 2; k++) {
+            const pine = new THREE.Mesh(
+              new THREE.BoxGeometry(0.055, 0.055, 0.055),
+              lpMat('#ffe14d', { emissive: '#ffbe0b', emissiveIntensity: 0.15 })
+            );
+            pine.position.set(x + (k - 0.5) * 0.12, 0.12, z + 0.02);
+            addPart(pine, stageFill);
+          }
+          const cil = new THREE.Mesh(
+            new THREE.OctahedronGeometry(0.045, 0),
+            lpMat('#3a9c46')
+          );
+          cil.position.set(x, 0.14, z - 0.03);
+          addPart(cil, stageFill);
+        }
+
+        createSingleTaco(-0.21, 0.05, 0.25, 0, 1);
+        createSingleTaco(0.0, -0.04, 0.05, 1, 2);
+        createSingleTaco(0.21, 0.06, -0.22, 2, 3);
+      } else if (foodId === 'smoothie') {
+        // Mordisco 5: Vaso facetado y popote
+        const glass = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.28, 0.18, 0.64, 9, 1, true),
+          lpMat('#d8f3ff', { transparent: true, opacity: 0.42, roughness: 0.15, side: THREE.DoubleSide })
+        );
+        glass.position.y = -0.02;
+        addPart(glass, 4);
+
+        const baseGlass = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.185, 0.175, 0.06, 9),
+          lpMat('#bfe8ff', { transparent: true, opacity: 0.65 })
+        );
+        baseGlass.position.y = -0.32;
+        addPart(baseGlass, 4);
+
+        // Mordisco 4: Capa base de frutos rojos
+        const layer1 = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.21, 0.17, 0.18, 9),
+          lpMat('#e6396b')
+        );
+        layer1.position.y = -0.2;
+        addPart(layer1, 3);
+
+        // Mordisco 3: Capa central de mango / maracuyá
+        const layer2 = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.245, 0.21, 0.2, 9),
+          lpMat('#ff9f1c', { emissive: '#ff7700', emissiveIntensity: 0.15 })
+        );
+        layer2.position.y = -0.01;
+        addPart(layer2, 2);
+
+        // Mordisco 2: Capa superior tropical de piña y crema
+        const layer3 = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.265, 0.245, 0.18, 9),
+          lpMat('#ffe066')
+        );
+        layer3.position.y = 0.18;
+        addPart(layer3, 1);
+
+        // Mordisco 1: Corona de fruta, rodaja de piña y popote
+        const foam = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(0.19, 0),
+          lpMat('#fff7e6')
+        );
+        foam.scale.set(1.15, 0.65, 1.15);
+        foam.position.y = 0.31;
+        addPart(foam, 0);
+
+        const pineSlice = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.12, 0.12, 0.03, 6, 1, false, 0, Math.PI),
+          lpMat('#ffd60a')
+        );
+        pineSlice.rotation.z = Math.PI / 2;
+        pineSlice.position.set(0.25, 0.31, 0);
+        addPart(pineSlice, 0);
+
+        const straw = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.02, 0.02, 0.68, 6),
+          lpMat('#00f5d4')
+        );
+        straw.position.set(-0.08, 0.25, 0.04);
+        straw.rotation.z = 0.22;
+        addPart(straw, 0);
+      } else if (foodId === 'sushi') {
+        // Mordisco 5: Tabla de madera geta + jengibre y wasabi
+        const board = new THREE.Mesh(
+          new THREE.BoxGeometry(0.92, 0.06, 0.56),
+          lpMat('#8d5b3a')
+        );
+        board.position.y = -0.14;
+        addPart(board, 4);
+
+        [-0.32, 0.32].forEach(bx => {
+          const foot = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.46), lpMat('#5e3b24'));
+          foot.position.set(bx, -0.2, 0);
+          addPart(foot, 4);
+        });
+
+        const wasabi = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.07, 5), lpMat('#70e000'));
+        wasabi.position.set(-0.34, -0.075, 0.16);
+        addPart(wasabi, 4);
+
+        // Mordiscos 1..4: 4 piezas variadas (2 nigiris + 2 makis)
+        function addNigiri(x, z, fishColor, stage) {
+          const rice = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.09, 0.11), lpMat('#f8f9fa'));
+          rice.position.set(x, -0.06, z);
+          addPart(rice, stage);
+          const fish = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.045, 0.125), lpMat(fishColor));
+          fish.position.set(x, 0.005, z);
+          addPart(fish, stage);
+        }
+
+        function addMaki(x, z, centerColor, stage) {
+          const nori = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 0.12, 8), lpMat('#1b2e22'));
+          nori.position.set(x, -0.05, z);
+          addPart(nori, stage);
+          const rice = new THREE.Mesh(new THREE.CylinderGeometry(0.088, 0.088, 0.124, 8), lpMat('#ffffff'));
+          rice.position.set(x, -0.05, z);
+          addPart(rice, stage);
+          const core = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.13, 6), lpMat(centerColor));
+          core.position.set(x, -0.05, z);
+          addPart(core, stage);
+        }
+
+        addNigiri(-0.22, -0.1, '#ff6b4a', 0);
+        addNigiri(0.08, -0.1, '#e63946', 1);
+        addMaki(-0.08, 0.14, '#70e000', 2);
+        addMaki(0.22, 0.1, '#ff9f1c', 3);
+      }
+
+      if (isMini) {
+        root.scale.setScalar(0.32);
+      }
+      return { root, biteGroups };
+    }
+
+    // Coloca una escultura 3D gigante de cada platillo girando sobre la azotea de su restaurante
+    Object.values(restaurantsMap).forEach(r => {
+      const topper = createFoodSculpture(r.food.id, false);
+      topper.root.scale.setScalar(1.85);
+      r.roofPedestal.add(topper.root);
+      r.roofSculpture = topper.root;
+    });
+
+    /* =========================================================================
+       11. ESTADO 2: MENÚ HOLOGRÁFICO SEMICIRCULAR EN 3D (FRENTE A ESTELA DE LUZ)
+       ========================================================================= */
+    const menuGroup = new THREE.Group();
+    menuGroup.visible = false;
+    handRig.add(menuGroup);
+
+    const menuCards = [];
+    let hoveredCard = null;
+
+    function buildHolographicMenu() {
+      const total = FOOD_CATALOG.length;
+      const centerZ = -0.95;
+      const radius = 1.52;
+      const arcSpan = Math.PI * 0.56; // Semicírculo abierto frente al extremo de la estela de luz
+
+      FOOD_CATALOG.forEach((food, idx) => {
+        const t = idx / (total - 1);
+        const angle = -arcSpan / 2 + t * arcSpan;
+
+        const cardGrp = new THREE.Group();
+        const x = Math.sin(angle) * radius;
+        const z = centerZ - Math.cos(angle) * radius;
+        const y = 0.06 + (idx === 2 || idx === 3 ? 0.05 : 0);
+
+        cardGrp.position.set(x, y, z);
+        cardGrp.lookAt(0, 0.02, 0);
+        cardGrp.userData = { food, index: idx, basePos: cardGrp.position.clone() };
+
+        // Panel holográfico traslúcido
+        const panelMat = new THREE.MeshBasicMaterial({
+          color: '#072a3d',
+          transparent: true,
+          opacity: 0.52,
+          side: THREE.DoubleSide
+        });
+        const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.58), panelMat);
+        cardGrp.add(panel);
+
+        // Marco neón exterior
+        const borderMat = new THREE.LineBasicMaterial({
+          color: '#00f5ff',
+          transparent: true,
+          opacity: 0.85
+        });
+        const border = new THREE.LineSegments(
+          new THREE.EdgesGeometry(new THREE.PlaneGeometry(0.47, 0.59)),
+          borderMat
+        );
+        border.position.z = 0.004;
+        cardGrp.add(border);
+
+        // Etiqueta inferior nítida generada en Canvas
+        const labelTex = createCanvasTex(320, 128, (ctx, w, h) => {
+          ctx.fillStyle = 'rgba(4, 20, 32, 0.9)';
+          ctx.fillRect(0, 0, w, h);
+          ctx.strokeStyle = food.accent;
+          ctx.lineWidth = 4;
+          ctx.strokeRect(4, 4, w - 8, h - 8);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 24px Segoe UI, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(food.shortName, w / 2, 50);
+          ctx.fillStyle = '#9cecff';
+          ctx.font = '16px Segoe UI, sans-serif';
+          ctx.fillText('Clic para proyectar', w / 2, 92);
+        });
+
+        const labelMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.42, 0.165),
+          new THREE.MeshBasicMaterial({ map: labelTex.tex, transparent: true })
+        );
+        labelMesh.position.set(0, -0.18, 0.015);
+        cardGrp.add(labelMesh);
+
+        // Mini-escultura Low Poly 3D rotatoria del platillo
+        const mini = createFoodSculpture(food.id, true);
+        mini.root.position.set(0, 0.08, 0.09);
+        cardGrp.add(mini.root);
+
+        // Hitbox invisible para raycasting fiable con el mouse
+        const hitMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.48, 0.6, 0.16),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        hitMesh.userData.cardRef = cardGrp;
+        cardGrp.add(hitMesh);
+
+        menuGroup.add(cardGrp);
+        menuCards.push({
+          grp: cardGrp,
+          panelMat,
+          borderMat,
+          miniRoot: mini.root,
+          hitMesh,
+          food,
+          hoverAmount: 0
+        });
+      });
+    }
+    buildHolographicMenu();
+
+    /* =========================================================================
+       12. ESTADO 3: PROYECCIÓN HOLOGRÁFICA CENTRAL, SCANLINES Y PARTÍCULAS
+       ========================================================================= */
+    const hologramStage = new THREE.Group();
+    hologramStage.position.set(0, 0.04, -2.38);
+    hologramStage.visible = false;
+    handRig.add(hologramStage);
+
+    // Anillos de escaneo holográfico (cian y dorado)
+    const scanRingCyan = new THREE.Mesh(
+      new THREE.TorusGeometry(0.62, 0.012, 6, 32),
+      new THREE.MeshBasicMaterial({
+        color: '#00f5ff',
+        transparent: true,
+        opacity: 0.78,
+        blending: THREE.AdditiveBlending
+      })
+    );
+    scanRingCyan.rotation.x = Math.PI / 2;
+    hologramStage.add(scanRingCyan);
+
+    const scanRingGold = new THREE.Mesh(
+      new THREE.TorusGeometry(0.56, 0.01, 6, 32),
+      new THREE.MeshBasicMaterial({
+        color: '#ffbe3b',
+        transparent: true,
+        opacity: 0.72,
+        blending: THREE.AdditiveBlending
+      })
+    );
+    scanRingGold.rotation.x = Math.PI / 2;
+    hologramStage.add(scanRingGold);
+
+    // Jaula wireframe holográfica alrededor de la comida
+    const holoWireShell = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.68, 1),
+      new THREE.MeshBasicMaterial({
+        color: '#00f5ff',
+        wireframe: true,
+        transparent: true,
+        opacity: 0.16,
+        blending: THREE.AdditiveBlending
+      })
+    );
+    hologramStage.add(holoWireShell);
+
+    // Partículas ascendentes continuas alrededor del holograma
+    const holoPartCount = 70;
+    const holoPartGeo = new THREE.BufferGeometry();
+    const holoPartPos = new Float32Array(holoPartCount * 3);
+    for (let i = 0; i < holoPartCount; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 0.22 + Math.random() * 0.48;
+      holoPartPos[i * 3] = Math.cos(a) * r;
+      holoPartPos[i * 3 + 1] = (Math.random() - 0.5) * 1.1;
+      holoPartPos[i * 3 + 2] = Math.sin(a) * r;
+    }
+    holoPartGeo.setAttribute('position', new THREE.BufferAttribute(holoPartPos, 3));
+    const holoParticles = new THREE.Points(
+      holoPartGeo,
+      new THREE.PointsMaterial({
+        color: '#80f8ff',
+        size: 0.036,
+        transparent: true,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    hologramStage.add(holoParticles);
+
+    // Explosiones de partículas al presionar [C]
+    const burstParticles = [];
+    function spawnBiteBurst(originWorld, colorHex = '#ffbe3b') {
+      const count = 26;
+      for (let i = 0; i < count; i++) {
+        const p = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.028, 0),
+          new THREE.MeshBasicMaterial({
+            color: i % 2 === 0 ? colorHex : '#00f5ff',
+            transparent: true,
+            opacity: 1,
+            blending: THREE.AdditiveBlending
+          })
+        );
+        p.position.copy(originWorld);
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.random() * Math.PI;
+        const spd = 1.1 + Math.random() * 1.8;
+        const vel = new THREE.Vector3(
+          Math.sin(phi) * Math.cos(theta) * spd,
+          Math.abs(Math.cos(phi)) * spd + 0.5,
+          Math.sin(phi) * Math.sin(theta) * spd
+        );
+        scene.add(p);
+        burstParticles.push({ mesh: p, vel, life: 1.0 });
+      }
+    }
+
+    let activeHeroFood = null; // { root, biteGroups }
+    let activeFoodHitbox = null;
+
+    /* =========================================================================
+       13. ESTADO 4: REDES ORGÁNICAS RAMIFICADAS (DENDRITAS 3D) Y RUTA GPS 3D
+       ========================================================================= */
+    // Se anclan a la cámara para envolver periféricamente la visión AR del usuario
+    const dendriteGroup = new THREE.Group();
+    dendriteGroup.position.set(0, 0, -2.25);
+    camera.add(dendriteGroup);
+    const dendriteNodes = []; // { mesh, mat, threshold, phase }
+
+    /**
+     * Genera redes orgánicas ramificadas (dendritas/terminaciones nerviosas)
+     * que nacen desde los bordes del encuadre hacia el centro.
+     */
+    function buildDendriteNetworks() {
+      const seeds = [
+        { start: new THREE.Vector3(-2.05, 1.15, 0), dir: new THREE.Vector3(0.75, -0.35, 0.04) },
+        { start: new THREE.Vector3(2.05, 1.12, 0), dir: new THREE.Vector3(-0.75, -0.35, 0.04) },
+        { start: new THREE.Vector3(-2.1, -0.95, 0), dir: new THREE.Vector3(0.8, 0.35, -0.04) },
+        { start: new THREE.Vector3(2.1, -0.95, 0), dir: new THREE.Vector3(-0.8, 0.35, -0.04) },
+        { start: new THREE.Vector3(-1.25, 1.32, 0), dir: new THREE.Vector3(0.45, -0.65, 0.06) },
+        { start: new THREE.Vector3(1.25, 1.32, 0), dir: new THREE.Vector3(-0.45, -0.65, 0.06) }
+      ];
+
+      function growBranch(origin, dir, depth, length, radius, thresholdBase) {
+        if (depth <= 0) return;
+
+        const mid = origin.clone().addScaledVector(dir, length * 0.5);
+        mid.x += (Math.random() - 0.5) * 0.18;
+        mid.y += (Math.random() - 0.5) * 0.18;
+        const end = origin.clone().addScaledVector(dir, length);
+
+        const curve = new THREE.CatmullRomCurve3([origin, mid, end]);
+        const mat = lpMat('#4a5460', {
+          emissive: '#4a5460',
+          emissiveIntensity: 0.05,
+          transparent: true,
+          opacity: 0.92
+        });
+
+        const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 6, radius, 5, false), mat);
+        tube.scale.setScalar(0.001);
+        dendriteGroup.add(tube);
+
+        const bulb = new THREE.Mesh(new THREE.IcosahedronGeometry(radius * 2.1, 0), mat);
+        bulb.position.copy(end);
+        bulb.scale.setScalar(0.001);
+        dendriteGroup.add(bulb);
+
+        const threshold = thresholdBase;
+        dendriteNodes.push({ mesh: tube, mat, threshold, phase: Math.random() * Math.PI * 2 });
+        dendriteNodes.push({ mesh: bulb, mat, threshold, phase: Math.random() * Math.PI * 2 });
+
+        // Dos ramificaciones hijas con ligera divergencia orgánica
+        const branches = depth > 2 ? 2 : 1;
+        for (let b = 0; b < branches; b++) {
+          const nextDir = dir.clone();
+          nextDir.x += (b === 0 ? 0.28 : -0.28) + (Math.random() - 0.5) * 0.25;
+          nextDir.y += (Math.random() - 0.5) * 0.35;
+          nextDir.z += (Math.random() - 0.5) * 0.15;
+          nextDir.normalize();
+          growBranch(end, nextDir, depth - 1, length * 0.72, radius * 0.68, thresholdBase + 0.14);
+        }
+      }
+
+      seeds.forEach(s => {
+        growBranch(s.start, s.dir.normalize(), 4, 0.65, 0.026, 0.1);
+      });
+    }
+    buildDendriteNetworks();
+
+    // --- Ruta GPS Holográfica 3D sobre el suelo de la plaza hacia la cafetería ---
+    const gpsGroup = new THREE.Group();
+    gpsGroup.visible = false;
+    scene.add(gpsGroup);
+
+    // Curva suave desde la posición actual del usuario hasta la entrada iluminada de la cafetería
+    let gpsCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0.0, 0.72, 2.55),
+      new THREE.Vector3(0.1, 0.12, 1.4),
+      new THREE.Vector3(0.8, 0.12, -2.5),
+      new THREE.Vector3(3.2, 0.12, -6.8),
+      new THREE.Vector3(7.4, 0.12, -10.2),
+      new THREE.Vector3(10.8, 0.12, -12.6)
+    ]);
+
+    const gpsLineMat = new THREE.MeshBasicMaterial({
+      color: '#ffbe3b',
+      transparent: true,
+      opacity: 0.78,
+      blending: THREE.AdditiveBlending
+    });
+    const gpsTube = new THREE.Mesh(
+      new THREE.TubeGeometry(gpsCurve, 64, 0.065, 6, false),
+      gpsLineMat
+    );
+    gpsGroup.add(gpsTube);
+
+    // Halo exterior cian-dorado de la línea GPS
+    const gpsGlowTube = new THREE.Mesh(
+      new THREE.TubeGeometry(gpsCurve, 64, 0.13, 6, false),
+      new THREE.MeshBasicMaterial({
+        color: '#00f5ff',
+        transparent: true,
+        opacity: 0.28,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    gpsGroup.add(gpsGlowTube);
+
+    function updateGpsBadge(food, meters) {
+      const { ctx, cv, tex } = gpsBadgeTex;
+      const w = cv.width, h = cv.height;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = 'rgba(18, 12, 6, 0.9)';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = food ? food.accent : '#ffbe3b';
+      ctx.lineWidth = 5;
+      ctx.strokeRect(5, 5, w - 10, h - 10);
+      ctx.fillStyle = '#ffe066';
+      ctx.font = 'bold 26px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`📍 ${meters}m - 1 min caminando`, w / 2, 50);
+      ctx.fillStyle = '#a8f0ff';
+      ctx.font = 'bold 20px Segoe UI, sans-serif';
+      ctx.fillText(food ? `${food.emoji} ${food.venue}` : 'Destino iluminado en plaza', w / 2, 90);
+      tex.needsUpdate = true;
+    }
+
+    function rebuildGpsRouteFromPlayer(food) {
+      const rest = food && restaurantsMap[food.id] ? restaurantsMap[food.id] : null;
+      const dest = rest ? rest.entrancePos.clone() : new THREE.Vector3(10.8, 0.12, -12.6);
+
+      const startGround = new THREE.Vector3(
+        playerPos.x - Math.sin(playerYaw) * 1.1,
+        0.52,
+        playerPos.z - Math.cos(playerYaw) * 1.1
+      );
+      const p1 = new THREE.Vector3(
+        playerPos.x - Math.sin(playerYaw) * 2.2,
+        0.12,
+        playerPos.z - Math.cos(playerYaw) * 2.2
+      );
+      const midA = p1.clone().lerp(dest, 0.36);
+      midA.y = 0.12;
+      const midB = p1.clone().lerp(dest, 0.72);
+      midB.y = 0.12;
+
+      // Rodea suavemente la fuente/torre del reloj en (0, 0, -10.5) si la ruta pasa muy cerca
+      [midA, midB].forEach(pt => {
+        const dx = pt.x - 0;
+        const dz = pt.z - (-10.5);
+        const dist = Math.hypot(dx, dz);
+        if (dist < 4.5) {
+          const pushAngle = Math.atan2(dz, dx || 0.01);
+          pt.x = Math.cos(pushAngle) * 4.8;
+          pt.z = -10.5 + Math.sin(pushAngle) * 4.8;
+        }
+      });
+
+      gpsCurve = new THREE.CatmullRomCurve3([startGround, p1, midA, midB, dest]);
+      gpsTube.geometry.dispose();
+      gpsTube.geometry = new THREE.TubeGeometry(gpsCurve, 72, 0.065, 6, false);
+      gpsGlowTube.geometry.dispose();
+      gpsGlowTube.geometry = new THREE.TubeGeometry(gpsCurve, 72, 0.13, 6, false);
+
+      const badgePos = gpsCurve.getPointAt(0.5);
+      gpsBadgeSprite.position.set(badgePos.x, 1.48, badgePos.z);
+
+      const meters = Math.max(20, Math.round(playerPos.distanceTo(dest) * 3.2));
+      updateGpsBadge(food, meters);
+      return meters;
+    }
+
+    // Flechas animadas deslizándose sobre la ruta GPS
+    const gpsChevrons = [];
+    const chevronGeo = new THREE.ConeGeometry(0.16, 0.34, 4);
+    chevronGeo.rotateX(Math.PI / 2);
+    for (let i = 0; i < 20; i++) {
+      const ch = new THREE.Mesh(
+        chevronGeo,
+        new THREE.MeshBasicMaterial({
+          color: i % 2 === 0 ? '#ffe066' : '#00f5ff',
+          transparent: true,
+          opacity: 0.92,
+          blending: THREE.AdditiveBlending
+        })
+      );
+      gpsGroup.add(ch);
+      gpsChevrons.push({ mesh: ch, offset: i / 20 });
+    }
+
+    // Marcador flotante 3D de distancia GPS ("85m - 1 min caminando")
+    const gpsBadgeTex = createCanvasTex(440, 120, (ctx, w, h) => {
+      ctx.fillStyle = 'rgba(18, 12, 6, 0.88)';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#ffbe3b';
+      ctx.lineWidth = 5;
+      ctx.strokeRect(5, 5, w - 10, h - 10);
+      ctx.fillStyle = '#ffe066';
+      ctx.font = 'bold 28px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('📍 85m - 1 min caminando', w / 2, 54);
+      ctx.fillStyle = '#a8f0ff';
+      ctx.font = '20px Segoe UI, sans-serif';
+      ctx.fillText('Destino iluminado en plaza', w / 2, 92);
+    });
+    const gpsBadgeSprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: gpsBadgeTex.tex, transparent: true })
+    );
+    gpsBadgeSprite.position.set(5.4, 1.35, -8.5);
+    gpsBadgeSprite.scale.set(2.4, 0.66, 1);
+    gpsGroup.add(gpsBadgeSprite);
+
+    /* =========================================================================
+       14. MÁQUINA DE ESTADOS DE LA EXPERIENCIA Y TRANSICIONES
+       ========================================================================= */
+    let currentState = STATES.CAMPUS_EXPLORE;
+    let stateTimer = 0;
+    let exploreCountdown = 10.0;
+    let alertCountdown = 5.0;
+    let selectedFood = null;
+    let biteCount = 0;
+    const MAX_BITES = 5;
+    let hologramPulse = 0;
+    let dendriteGrowth = 0; // 0.0 -> 1.0 conforme se come y en Estado 4
+
+    // Referencias DOM del HUD
+    const domPhaseLabel = document.getElementById('phase-label');
+    const domAlertHud = document.getElementById('alert-hud');
+    const domAlertTimerBar = document.getElementById('alert-timer-bar');
+    const domAlertCountdown = document.getElementById('alert-countdown');
+    const domBodyScanCanvas = document.getElementById('body-scan-canvas');
+    const bodyScanCtx = domBodyScanCanvas.getContext('2d');
+    const domBioMetersHud = document.getElementById('bio-meters-hud');
+    const domBioFoodTag = document.getElementById('bio-food-tag');
+    const domDistractionVal = document.getElementById('distraction-val');
+    const domDistractionFill = document.getElementById('distraction-fill');
+    const domHungerVal = document.getElementById('hunger-val');
+    const domHungerFill = document.getElementById('hunger-fill');
+    const domBioStatusNote = document.getElementById('bio-status-note');
+    const domInstructionPill = document.getElementById('instruction-pill');
+    const domInstructionTitle = document.getElementById('instruction-title');
+    const domInstructionSub = document.getElementById('instruction-sub');
+    const domEatWrap = document.getElementById('eat-progress-wrap');
+    const domEatLabel = document.getElementById('eat-count-label');
+    const domPips = Array.from(document.querySelectorAll('.bite-pip'));
+    const domGpsHud = document.getElementById('gps-hud');
+    const domGpsTitle = document.getElementById('gps-title');
+    const domGpsMeta = document.getElementById('gps-meta');
+    const domTooltip = document.getElementById('hover-tooltip');
+
+    function drawBodyScan(t) {
+      const ctx = bodyScanCtx;
+      const w = domBodyScanCanvas.width;
+      const h = domBodyScanCanvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      // Cuadrícula biométrica de fondo
+      ctx.strokeStyle = 'rgba(255, 75, 75, 0.14)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < w; x += 18) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      for (let y = 0; y < h; y += 18) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+
+      const cx = w * 0.4;
+      const pulse = (Math.sin(t * 7.5) + 1) * 0.5;
+
+      // Silueta anatómica estilizada del cuerpo humano
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 80, 70, 0.16)';
+      ctx.strokeStyle = 'rgba(255, 130, 110, 0.72)';
+      ctx.lineWidth = 2;
+
+      // Cabeza y cuello
+      ctx.beginPath();
+      ctx.arc(cx, 32, 16, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Torso, brazos y piernas
+      ctx.beginPath();
+      ctx.moveTo(cx - 8, 49);
+      ctx.lineTo(cx + 8, 49);
+      ctx.lineTo(cx + 34, 62);
+      ctx.lineTo(cx + 46, 122);
+      ctx.lineTo(cx + 36, 124);
+      ctx.lineTo(cx + 24, 78);
+      ctx.lineTo(cx + 20, 130);
+      ctx.lineTo(cx + 24, 206);
+      ctx.lineTo(cx + 10, 206);
+      ctx.lineTo(cx + 3, 136);
+      ctx.lineTo(cx - 3, 136);
+      ctx.lineTo(cx - 10, 206);
+      ctx.lineTo(cx - 24, 206);
+      ctx.lineTo(cx - 20, 130);
+      ctx.lineTo(cx - 24, 78);
+      ctx.lineTo(cx - 36, 124);
+      ctx.lineTo(cx - 46, 122);
+      ctx.lineTo(cx - 34, 62);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      // Zonas críticas con nodos pulsantes y etiquetas médicas
+      const hotspots = [
+        { x: cx, y: 31, label: 'FATIGA COGNITIVA', col: '#ff3b30', ly: 32 },
+        { x: cx + 4, y: 78, label: 'HIPOGLUCEMIA', col: '#ff6b35', ly: 78 },
+        { x: cx, y: 112, label: 'AYUNO 6H · 0% GLUC.', col: '#ffb020', ly: 116 }
+      ];
+      hotspots.forEach((hs, idx) => {
+        const r = 6 + pulse * 5;
+        ctx.beginPath();
+        ctx.arc(hs.x, hs.y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = hs.col;
+        ctx.lineWidth = 1.6;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(hs.x, hs.y, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+
+        // Línea de señalización hacia la derecha
+        ctx.beginPath();
+        ctx.moveTo(hs.x + 8, hs.y);
+        ctx.lineTo(cx + 52, hs.ly);
+        ctx.lineTo(w - 8, hs.ly);
+        ctx.strokeStyle = 'rgba(255, 190, 130, 0.55)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = idx === 0 ? '#ff8a80' : (idx === 1 ? '#ffb085' : '#ffe082');
+        ctx.font = 'bold 10px Segoe UI, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(hs.label, cx + 54, hs.ly - 5);
+      });
+
+      // Haz láser horizontal del escáner recorriendo el cuerpo
+      const scanY = 14 + ((Math.sin(t * 2.2) + 1) * 0.5) * (h - 46);
+      const beamGrd = ctx.createLinearGradient(0, scanY - 12, 0, scanY + 12);
+      beamGrd.addColorStop(0, 'rgba(255, 60, 48, 0)');
+      beamGrd.addColorStop(0.5, 'rgba(255, 90, 60, 0.45)');
+      beamGrd.addColorStop(1, 'rgba(255, 60, 48, 0)');
+      ctx.fillStyle = beamGrd;
+      ctx.fillRect(0, scanY - 12, w, 24);
+      ctx.fillStyle = '#ff6b57';
+      ctx.fillRect(0, scanY - 1, w, 2);
+
+      // Electrocardiograma irregular en la parte inferior del escáner
+      ctx.beginPath();
+      ctx.strokeStyle = '#ff5252';
+      ctx.lineWidth = 1.6;
+      for (let x = 8; x < w - 8; x += 3) {
+        const phase = (x * 0.14 - t * 6.5);
+        const spike = Math.sin(phase) * 3 + (Math.sin(phase * 3.1) > 0.88 ? -9 : 0);
+        const y = h - 14 + spike;
+        if (x === 8) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = '#ff9e80';
+      ctx.font = 'bold 10px Segoe UI, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('ESTADO: GRAVE', w - 10, 16);
+    }
+
+    function updateBioMeters(bites) {
+      const progress = THREE.MathUtils.clamp(bites / MAX_BITES, 0, 1);
+      const distractionPct = Math.round((1 - progress) * 100);
+      const hungerPct = Math.round(progress * 100);
+
+      domDistractionVal.textContent = `${distractionPct}%`;
+      domDistractionFill.style.width = `${distractionPct}%`;
+      if (distractionPct <= 20) {
+        domDistractionFill.style.background = 'linear-gradient(90deg, #4cc9f0, #06d6a0)';
+      } else {
+        domDistractionFill.style.background = 'linear-gradient(90deg, #ff4d6d, #ff9f1c)';
+      }
+
+      domHungerVal.textContent = `${hungerPct}%`;
+      domHungerFill.style.width = `${hungerPct}%`;
+
+      if (bites === 0) {
+        domBioStatusNote.textContent = 'Distracción máxima: tu apetito está suprimido. Presiona [C] para comer.';
+      } else if (bites < MAX_BITES) {
+        domBioStatusNote.textContent = `Desconectando saturación (${distractionPct}%) y despertando el hambre (${hungerPct}%).`;
+      } else {
+        domBioStatusNote.textContent = '¡Distracción eliminada! Hambre al 100%: ruta hacia tu alimento activa.';
+      }
+    }
+
+    function updateStorefrontSign(food) {
+      Object.values(restaurantsMap).forEach(r => {
+        const isSelected = Boolean(food && r.food.id === food.id);
+        const { ctx, cv, tex } = r.signTexObj;
+        campusRefs.drawRestaurantSignTex(ctx, cv.width, cv.height, r.food, isSelected);
+        tex.needsUpdate = true;
+        r.signMat.emissiveIntensity = isSelected ? 1.55 : 0.25;
+        r.signLight.intensity = isSelected ? 2.8 : 0;
+        r.beaconMat.opacity = isSelected ? 0.22 : 0;
+      });
+    }
+
+    function setState(newState) {
+      currentState = newState;
+      stateTimer = 0;
+
+      document.body.classList.remove('state-explore', 'state-alert', 'state-menu', 'state-eat', 'state-sensory');
+      domAlertHud.style.display = 'none';
+      domBioMetersHud.style.display = 'none';
+      domInstructionPill.style.display = 'none';
+      domEatWrap.style.display = 'none';
+      domGpsHud.style.display = 'none';
+      domTooltip.style.display = 'none';
+
+      if (newState === STATES.CAMPUS_EXPLORE) {
+        document.body.classList.add('state-explore');
+        domPhaseLabel.textContent = 'Estado 0 · Saturación Informativa (Scroll Constante)';
+        domInstructionPill.style.display = 'block';
+        domInstructionTitle.textContent = 'Atención 100% enfocada en el teléfono y saturada de información constante';
+        domInstructionSub.textContent = 'Puedes moverte con [W][A][S][D] · Alerta de salud en 10.0s';
+        alert3DGroup.visible = false;
+        noiseGroup.visible = true;
+        menuGroup.visible = false;
+        hologramStage.visible = false;
+        gpsGroup.visible = false;
+        beamMat.opacity = 0;
+        innerBeamMat.opacity = 0;
+        holoEmitterRing.material.opacity = 0;
+        holoLight.intensity = 0;
+        targetWarmth = 0;
+        drawPhoneScreen(STATES.CAMPUS_EXPLORE, '', 0);
+        updateStorefrontSign(null);
+      } else if (newState === STATES.ALERT_SCROLL) {
+        document.body.classList.add('state-alert');
+        domPhaseLabel.textContent = 'Estado 1 · Alerta Crítica de Alimentación';
+        domAlertHud.style.display = 'flex';
+        drawBodyScan(0);
+        alert3DGroup.visible = true;
+        // Al aparecer la alerta de alimentación, se limpian los mensajes flotantes alrededor
+        noiseGroup.visible = false;
+        menuGroup.visible = false;
+        hologramStage.visible = false;
+        gpsGroup.visible = false;
+        beamMat.opacity = 0;
+        innerBeamMat.opacity = 0;
+        holoEmitterRing.material.opacity = 0;
+        holoLight.intensity = 0;
+        targetWarmth = 0;
+        drawPhoneScreen(STATES.ALERT_SCROLL);
+        updateStorefrontSign(null);
+      } else if (newState === STATES.MENU_3D) {
+        document.body.classList.add('state-menu');
+        domPhaseLabel.textContent = 'Estado 2 · Menú Holográfico 3D';
+        domInstructionPill.style.display = 'block';
+        domInstructionTitle.textContent = 'Elige el alimento que deseas proyectar';
+        domInstructionSub.textContent = 'Pasa el mouse sobre las tarjetas 3D flotantes frente a la estela de luz y haz clic';
+        // El ruido informativo se detiene abruptamente
+        alert3DGroup.visible = false;
+        noiseGroup.visible = false;
+        menuGroup.visible = true;
+        hologramStage.visible = false;
+        gpsGroup.visible = false;
+        beamMat.opacity = 0.26;
+        beamMat.color.set('#00f5ff');
+        innerBeamMat.opacity = 0.18;
+        innerBeamMat.color.set('#9cf6ff');
+        holoEmitterRing.material.opacity = 0.55;
+        holoEmitterRing.material.color.set('#00f5ff');
+        holoLight.intensity = 1.25;
+        holoLight.color.set('#00f5ff');
+        targetWarmth = 0.12;
+        drawPhoneScreen(STATES.MENU_3D);
+      } else if (newState === STATES.HOLOGRAM_EAT) {
+        document.body.classList.add('state-eat');
+        domPhaseLabel.textContent = `Estado 3 · Proyección AR (${selectedFood.shortName})`;
+        domBioMetersHud.style.display = 'flex';
+        domBioFoodTag.textContent = `${selectedFood.emoji} ${selectedFood.shortName}`;
+        updateBioMeters(biteCount);
+        domInstructionPill.style.display = 'block';
+        domEatWrap.style.display = 'flex';
+        domInstructionTitle.textContent = 'Presiona repetidamente la tecla [C] (o haz clic sobre la comida) para interactuar y comer';
+        domInstructionSub.textContent = `${selectedFood.emoji} ${selectedFood.name} — ${selectedFood.subtitle}`;
+
+        menuGroup.visible = false;
+        hologramStage.visible = true;
+        gpsGroup.visible = false;
+        beamMat.opacity = 0.24;
+        beamMat.color.set('#ffbe3b');
+        innerBeamMat.opacity = 0.16;
+        innerBeamMat.color.set('#fff1c2');
+        holoEmitterRing.material.opacity = 0.65;
+        holoEmitterRing.material.color.set('#ffbe3b');
+        holoLight.intensity = 1.7;
+        holoLight.color.set('#ffbe3b');
+        dendriteGrowth = 0.18;
+        drawPhoneScreen(STATES.HOLOGRAM_EAT, selectedFood.shortName);
+      } else if (newState === STATES.SENSORY_GPS) {
+        document.body.classList.add('state-sensory');
+        domPhaseLabel.textContent = 'Estado 4 · Activación Sinestésica y Ruta GPS';
+        domBioMetersHud.style.display = 'flex';
+        domBioFoodTag.textContent = `${selectedFood.emoji} ${selectedFood.shortName}`;
+        updateBioMeters(MAX_BITES);
+        const distM = rebuildGpsRouteFromPlayer(selectedFood);
+        domGpsHud.style.display = 'block';
+        domGpsTitle.textContent = `Activación Sinestésica Completa · ${selectedFood.venue}`;
+        domGpsMeta.textContent = `${distM}m - 1 min caminando · Camina con [W][A][S][D] hacia ${selectedFood.name}`;
+
+        autoGuideTimer = 1.8;
+        hologramStage.visible = false;
+        gpsGroup.visible = true;
+        beamMat.opacity = 0.16;
+        beamMat.color.set('#ff9f1c');
+        innerBeamMat.opacity = 0.1;
+        innerBeamMat.color.set('#ffe066');
+        holoEmitterRing.material.opacity = 0;
+        holoLight.intensity = 1.8;
+        holoLight.color.set('#ff9f1c');
+        targetWarmth = 1.0;
+        dendriteGrowth = 1.0;
+        drawPhoneScreen(STATES.SENSORY_GPS, selectedFood.venue);
+        updateStorefrontSign(selectedFood);
+        SoundFX.playSensoryBloom();
+      }
+    }
+
+    function clearHeroFood() {
+      if (activeHeroFood && activeHeroFood.root.parent) {
+        activeHeroFood.root.parent.remove(activeHeroFood.root);
+      }
+      if (activeFoodHitbox && activeFoodHitbox.parent) {
+        activeFoodHitbox.parent.remove(activeFoodHitbox);
+      }
+      activeHeroFood = null;
+      activeFoodHitbox = null;
+    }
+
+    function selectFood(food) {
+      selectedFood = food;
+      biteCount = 0;
+      dendriteGrowth = 0;
+      domEatLabel.textContent = `0 / ${MAX_BITES}`;
+      domPips.forEach(p => p.classList.remove('eaten'));
+
+      clearHeroFood();
+      activeHeroFood = createFoodSculpture(food.id, false);
+      activeHeroFood.root.scale.setScalar(1.15);
+      hologramStage.add(activeHeroFood.root);
+
+      // Hitbox amplio sobre la escultura para permitir clic directo además de tecla [C]
+      activeFoodHitbox = new THREE.Mesh(
+        new THREE.SphereGeometry(0.68, 8, 8),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      hologramStage.add(activeFoodHitbox);
+
+      SoundFX.playSelect();
+      setState(STATES.HOLOGRAM_EAT);
+    }
+
+    function triggerEatBite() {
+      if (currentState !== STATES.HOLOGRAM_EAT || !activeHeroFood) return;
+      if (biteCount >= MAX_BITES) return;
+
+      SoundFX.playBite(biteCount);
+
+      // Ocultar la etapa correspondiente al mordisco actual
+      const stageMeshes = activeHeroFood.biteGroups[biteCount] || [];
+      stageMeshes.forEach(m => {
+        m.visible = false;
+      });
+
+      biteCount++;
+      hologramPulse = 1.0;
+      domEatLabel.textContent = `${biteCount} / ${MAX_BITES}`;
+      if (domPips[biteCount - 1]) {
+        domPips[biteCount - 1].classList.add('eaten');
+      }
+      updateBioMeters(biteCount);
+
+      // Crecimiento progresivo de dendritas y calidez con cada mordisco
+      dendriteGrowth = biteCount / MAX_BITES;
+      targetWarmth = 0.15 + (biteCount / MAX_BITES) * 0.55;
+
+      const worldOrigin = new THREE.Vector3();
+      hologramStage.getWorldPosition(worldOrigin);
+      spawnBiteBurst(worldOrigin, selectedFood ? selectedFood.accent : '#ffbe3b');
+
+      if (biteCount >= MAX_BITES) {
+        setTimeout(() => {
+          if (currentState === STATES.HOLOGRAM_EAT) {
+            setState(STATES.SENSORY_GPS);
+          }
+        }, 320);
+      }
+    }
+
+    function resetExperience() {
+      exploreCountdown = 10.0;
+      alertCountdown = 5.0;
+      biteCount = 0;
+      dendriteGrowth = 0;
+      selectedFood = null;
+      hoveredCard = null;
+      hologramPulse = 0;
+      autoGuideTimer = 0;
+      clearHeroFood();
+
+      // Restablecer posición y mirada inicial del jugador en la banca
+      playerPos.copy(START_PLAYER_POS);
+      playerVel.set(0, 0, 0);
+      playerYaw = 0;
+      playerPitch = -0.08;
+      targetYaw = 0;
+      targetPitch = -0.08;
+      handRig.position.copy(playerPos);
+      handRig.rotation.y = 0;
+
+      // Reiniciar dendritas a escala mínima grisácea
+      dendriteNodes.forEach(n => {
+        n.mesh.scale.setScalar(0.001);
+        n.mat.color.set('#4a5460');
+        n.mat.emissive.set('#4a5460');
+        n.mat.emissiveIntensity = 0.05;
+      });
+
+      domEatLabel.textContent = `0 / ${MAX_BITES}`;
+      domPips.forEach(p => p.classList.remove('eaten'));
+      updateBioMeters(0);
+      document.body.style.cursor = 'default';
+      setState(STATES.CAMPUS_EXPLORE);
+    }
+
+    /* =========================================================================
+       15. CONTROLES DE JUEGO (W/A/S/D + ARRASTRE), RAYCASTING 3D Y TECLAS [C]/[R]
+       ========================================================================= */
+    const raycaster = new THREE.Raycaster();
+    const mouseNDC = new THREE.Vector2(0, 0);
+    const mouseParallax = { x: 0, y: 0 };
+    const keysDown = { w: false, a: false, s: false, d: false };
+    let isPointerDown = false;
+    let dragDistance = 0;
+    let lastPointer = { x: 0, y: 0 };
+
+    function updateMouseCoords(clientX, clientY) {
+      mouseNDC.x = (clientX / window.innerWidth) * 2 - 1;
+      mouseNDC.y = -(clientY / window.innerHeight) * 2 + 1;
+      mouseParallax.x = mouseNDC.x;
+      mouseParallax.y = mouseNDC.y;
+    }
+
+    window.addEventListener('pointerdown', e => {
+      if (e.target.closest('button')) return;
+      isPointerDown = true;
+      dragDistance = 0;
+      lastPointer.x = e.clientX;
+      lastPointer.y = e.clientY;
+    });
+
+    window.addEventListener('pointerup', () => {
+      isPointerDown = false;
+    });
+
+    window.addEventListener('pointermove', e => {
+      updateMouseCoords(e.clientX, e.clientY);
+
+      if (isPointerDown) {
+        const dx = e.clientX - lastPointer.x;
+        const dy = e.clientY - lastPointer.y;
+        dragDistance += Math.hypot(dx, dy);
+        lastPointer.x = e.clientX;
+        lastPointer.y = e.clientY;
+        if (dragDistance > 3) {
+          autoGuideTimer = 0;
+          targetYaw -= dx * 0.0042;
+          targetPitch = THREE.MathUtils.clamp(targetPitch - dy * 0.0035, -0.68, 0.52);
+          document.body.style.cursor = 'grabbing';
+          return;
+        }
+      }
+
+      if (currentState === STATES.MENU_3D) {
+        raycaster.setFromCamera(mouseNDC, camera);
+        const hitTargets = menuCards.map(c => c.hitMesh);
+        const hits = raycaster.intersectObjects(hitTargets, false);
+
+        if (hits.length > 0) {
+          const hitCardGrp = hits[0].object.userData.cardRef;
+          const cardObj = menuCards.find(c => c.grp === hitCardGrp);
+          if (cardObj && hoveredCard !== cardObj) {
+            hoveredCard = cardObj;
+            SoundFX.playHover();
+          }
+          document.body.style.cursor = 'pointer';
+          domTooltip.textContent = `${cardObj.food.emoji} ${cardObj.food.name}`;
+          domTooltip.style.left = `${e.clientX}px`;
+          domTooltip.style.top = `${e.clientY}px`;
+          domTooltip.style.display = 'block';
+        } else {
+          hoveredCard = null;
+          document.body.style.cursor = 'default';
+          domTooltip.style.display = 'none';
+        }
+      } else if (currentState === STATES.HOLOGRAM_EAT && activeFoodHitbox) {
+        raycaster.setFromCamera(mouseNDC, camera);
+        const hits = raycaster.intersectObject(activeFoodHitbox, false);
+        document.body.style.cursor = hits.length > 0 ? 'pointer' : 'default';
+      } else if (currentState === STATES.ALERT_SCROLL) {
+        raycaster.setFromCamera(mouseNDC, camera);
+        const hits = raycaster.intersectObject(alert3DCard, false);
+        document.body.style.cursor = hits.length > 0 ? 'pointer' : 'default';
+      } else {
+        document.body.style.cursor = 'default';
+      }
+    });
+
+    window.addEventListener('click', e => {
+      if (e.target.closest('button')) return;
+      if (dragDistance > 6) return; // Evita seleccionar si el usuario estaba girando la cámara
+      updateMouseCoords(e.clientX, e.clientY);
+      raycaster.setFromCamera(mouseNDC, camera);
+
+      if (currentState === STATES.ALERT_SCROLL) {
+        const hits = raycaster.intersectObject(alert3DCard, false);
+        if (hits.length > 0) {
+          SoundFX.playStopNoise();
+          setState(STATES.MENU_3D);
+        }
+      } else if (currentState === STATES.MENU_3D) {
+        const hitTargets = menuCards.map(c => c.hitMesh);
+        const hits = raycaster.intersectObjects(hitTargets, false);
+        if (hits.length > 0) {
+          const cardObj = menuCards.find(c => c.grp === hits[0].object.userData.cardRef);
+          if (cardObj) selectFood(cardObj.food);
+        }
+      } else if (currentState === STATES.HOLOGRAM_EAT && activeFoodHitbox) {
+        const hits = raycaster.intersectObject(activeFoodHitbox, false);
+        if (hits.length > 0) {
+          triggerEatBite();
+        }
+      }
+    });
+
+    window.addEventListener('keydown', e => {
+      const code = e.code;
+      if (code === 'KeyW') keysDown.w = true;
+      else if (code === 'KeyA') keysDown.a = true;
+      else if (code === 'KeyS') keysDown.s = true;
+      else if (code === 'KeyD') keysDown.d = true;
+
+      if (e.repeat) return;
+      const k = e.key.toLowerCase();
+      if (k === 'c') {
+        triggerEatBite();
+      } else if (k === 'r') {
+        SoundFX.playHover();
+        resetExperience();
+      }
+    });
+
+    window.addEventListener('keyup', e => {
+      const code = e.code;
+      if (code === 'KeyW') keysDown.w = false;
+      else if (code === 'KeyA') keysDown.a = false;
+      else if (code === 'KeyS') keysDown.s = false;
+      else if (code === 'KeyD') keysDown.d = false;
+    });
+
+    window.addEventListener('blur', () => {
+      keysDown.w = keysDown.a = keysDown.s = keysDown.d = false;
+      isPointerDown = false;
+    });
+
+    document.getElementById('btn-dismiss-alert').addEventListener('click', () => {
+      if (currentState === STATES.ALERT_SCROLL) {
+        SoundFX.playStopNoise();
+        setState(STATES.MENU_3D);
+      }
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      SoundFX.playHover();
+      resetExperience();
+    });
+
+    const btnAudio = document.getElementById('btn-audio');
+    const audioIcon = document.getElementById('audio-icon');
+    btnAudio.addEventListener('click', () => {
+      SoundFX.muted = !SoundFX.muted;
+      audioIcon.textContent = SoundFX.muted ? '🔇' : '🔊';
+      if (!SoundFX.muted) SoundFX.playHover();
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    /* =========================================================================
+       16. BUCLE PRINCIPAL DE ANIMACIÓN Y LERP FLUIDO
+       ========================================================================= */
+    const clock = new THREE.Clock();
+    const tmpColorA = new THREE.Color();
+    const tmpColorB = new THREE.Color();
+    const tmpColorC = new THREE.Color();
+    const tmpColorWork = new THREE.Color();
+    const beamTargetWorld = new THREE.Vector3();
+    const moveDirVec = new THREE.Vector3();
+    const forwardVec = new THREE.Vector3();
+    const rightVec = new THREE.Vector3();
+
+    // Inicializar en Estado 0 (10 segundos de exploración libre antes de la alerta)
+    setState(STATES.CAMPUS_EXPLORE);
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const elapsed = clock.getElapsedTime();
+      stateTimer += dt;
+
+      // --- 16.1 Animación de estudiantes caminando por la plaza ---
+      students.forEach(st => {
+        const pingPong = (Math.sin(elapsed * st.speed * Math.PI * 2 + st.phase * Math.PI * 2) + 1) * 0.5;
+        const prevPos = st.grp.position.clone();
+        st.grp.position.lerpVectors(st.a, st.b, pingPong);
+        const dir = st.grp.position.clone().sub(prevPos);
+        if (dir.lengthSq() > 0.000001) {
+          st.grp.rotation.y = Math.atan2(dir.x, dir.z);
+        }
+        const walkCycle = Math.sin(elapsed * 7.5 + st.phase * 12);
+        st.legL.rotation.x = walkCycle * 0.45;
+        st.legR.rotation.x = -walkCycle * 0.45;
+        st.armL.rotation.x = -walkCycle * 0.35;
+        st.armR.rotation.x = walkCycle * 0.35;
+      });
+
+      // --- 16.2 Interpolación atmosférica (fría -> golden hour vibrante) ---
+      currentWarmth = THREE.MathUtils.lerp(currentWarmth, targetWarmth, dt * 1.45);
+      const w = currentWarmth;
+
+      skyUniforms.uTopColor.value.copy(ATMOSPHERE.cold.skyTop).lerp(ATMOSPHERE.warm.skyTop, w);
+      skyUniforms.uMidColor.value.copy(ATMOSPHERE.cold.skyMid).lerp(ATMOSPHERE.warm.skyMid, w);
+      skyUniforms.uBottomColor.value.copy(ATMOSPHERE.cold.skyBottom).lerp(ATMOSPHERE.warm.skyBottom, w);
+      skyUniforms.uSunGlow.value = THREE.MathUtils.lerp(ATMOSPHERE.cold.sunGlow, ATMOSPHERE.warm.sunGlow, w);
+
+      scene.fog.color.copy(ATMOSPHERE.cold.fogColor).lerp(ATMOSPHERE.warm.fogColor, w);
+      scene.fog.density = THREE.MathUtils.lerp(ATMOSPHERE.cold.fogDensity, ATMOSPHERE.warm.fogDensity, w);
+
+      hemiLight.color.copy(ATMOSPHERE.cold.hemiSky).lerp(ATMOSPHERE.warm.hemiSky, w);
+      hemiLight.groundColor.copy(ATMOSPHERE.cold.hemiGround).lerp(ATMOSPHERE.warm.hemiGround, w);
+      hemiLight.intensity = THREE.MathUtils.lerp(ATMOSPHERE.cold.hemiInt, ATMOSPHERE.warm.hemiInt, w);
+
+      sunLight.color.copy(ATMOSPHERE.cold.sunColor).lerp(ATMOSPHERE.warm.sunColor, w);
+      sunLight.intensity = THREE.MathUtils.lerp(ATMOSPHERE.cold.sunInt, ATMOSPHERE.warm.sunInt, w);
+
+      fillLight.color.copy(ATMOSPHERE.cold.fillColor).lerp(ATMOSPHERE.warm.fillColor, w);
+      fillLight.intensity = THREE.MathUtils.lerp(ATMOSPHERE.cold.fillInt, ATMOSPHERE.warm.fillInt, w);
+
+      // Brillo sutil de farolas y ventanas
+      lampBulbs.forEach((b, i) => {
+        b.emissiveIntensity = 1.2 + Math.sin(elapsed * 2.5 + i) * 0.15 + w * 0.5;
+      });
+      buildingWindowMats.forEach(m => {
+        m.emissiveIntensity = 0.4 + w * 0.45;
+      });
+
+      // --- 16.3 Lógica por estado ---
+      if (currentState === STATES.CAMPUS_EXPLORE) {
+        exploreCountdown = Math.max(0, 10.0 - stateTimer);
+        domInstructionSub.textContent = `Puedes moverte con [W][A][S][D] · Alerta de salud en ${exploreCountdown.toFixed(1)}s`;
+
+        // Scroll constante en la pantalla del teléfono y bombardeo de notificaciones 3D
+        drawPhoneScreen(STATES.CAMPUS_EXPLORE, '', elapsed);
+        noiseCards.forEach(nc => {
+          nc.angle += nc.angSpeed * dt * 1.1;
+          nc.mesh.position.y += nc.speedY * dt;
+          if (nc.mesh.position.y > 1.8) nc.mesh.position.y = -1.1;
+          nc.mesh.position.x = Math.cos(nc.angle) * nc.radius;
+          nc.mesh.position.z = -1.1 + Math.sin(nc.angle) * nc.radius * 0.65;
+          nc.mesh.lookAt(0, nc.mesh.position.y, 0);
+          nc.mesh.scale.setScalar(nc.baseScale + Math.sin(elapsed * 9 + nc.angle) * 0.04);
+        });
+
+        if (exploreCountdown <= 0) {
+          SoundFX.playAlertPing();
+          setState(STATES.ALERT_SCROLL);
+        }
+      } else if (currentState === STATES.ALERT_SCROLL) {
+        alertCountdown = Math.max(0, 5.0 - stateTimer);
+        domAlertCountdown.textContent = `${alertCountdown.toFixed(1)}s`;
+        domAlertTimerBar.style.transform = `scaleX(${alertCountdown / 5.0})`;
+        drawBodyScan(elapsed);
+
+        // Pulso crítico rojo/ámbar en el panel 3D del teléfono
+        const pulse = (Math.sin(elapsed * 8) + 1) * 0.5;
+        alertBorderMat.color.copy(tmpColorA.set('#ff3b30')).lerp(tmpColorB.set('#ffb020'), pulse);
+        alert3DGroup.position.y = -0.06 + Math.sin(elapsed * 3.2) * 0.012;
+
+        if (alertCountdown <= 0) {
+          SoundFX.playStopNoise();
+          setState(STATES.MENU_3D);
+        }
+      } else if (currentState === STATES.MENU_3D) {
+        menuCards.forEach((c, idx) => {
+          const isHover = hoveredCard === c;
+          c.hoverAmount = THREE.MathUtils.lerp(c.hoverAmount, isHover ? 1 : 0, dt * 10);
+
+          const scale = 1.0 + c.hoverAmount * 0.16;
+          c.grp.scale.setScalar(scale);
+
+          const floatY = Math.sin(elapsed * 2.2 + idx * 0.9) * 0.025;
+          c.grp.position.y = c.grp.userData.basePos.y + floatY + c.hoverAmount * 0.04;
+
+          c.panelMat.opacity = 0.48 + c.hoverAmount * 0.34;
+          c.borderMat.color.copy(tmpColorA.set('#00f5ff')).lerp(tmpColorB.set('#ffe066'), c.hoverAmount);
+          c.miniRoot.rotation.y += dt * (0.95 + c.hoverAmount * 1.9);
+        });
+      } else if (currentState === STATES.HOLOGRAM_EAT) {
+        // Levitación sinusoidal y rotación suave del alimento proyectado frente a la estela de luz
+        hologramStage.position.y = 0.04 + Math.sin(elapsed * 2.3) * 0.05;
+        if (activeHeroFood) {
+          activeHeroFood.root.rotation.y += dt * 0.7;
+          hologramPulse = THREE.MathUtils.lerp(hologramPulse, 0, dt * 7.5);
+          const s = 1.15 + hologramPulse * 0.24;
+          activeHeroFood.root.scale.setScalar(s);
+        }
+
+        // Líneas de escaneo subiendo y bajando en cian y dorado
+        scanRingCyan.position.y = Math.sin(elapsed * 2.8) * 0.42;
+        scanRingGold.position.y = Math.cos(elapsed * 2.3) * 0.38;
+        holoWireShell.rotation.y -= dt * 0.45;
+        holoWireShell.rotation.x += dt * 0.22;
+
+        // Partículas luminosas ascendentes alrededor del holograma
+        const pArr = holoPartGeo.attributes.position.array;
+        for (let i = 0; i < holoPartCount; i++) {
+          pArr[i * 3 + 1] += dt * 0.48;
+          if (pArr[i * 3 + 1] > 0.65) pArr[i * 3 + 1] = -0.55;
+        }
+        holoPartGeo.attributes.position.needsUpdate = true;
+      } else if (currentState === STATES.SENSORY_GPS) {
+        // Animación de flechas GPS recorriendo la curva hacia la cafetería
+        gpsChevrons.forEach(ch => {
+          const t = (ch.offset + elapsed * 0.26) % 1;
+          const p = gpsCurve.getPointAt(t);
+          const nextP = gpsCurve.getPointAt(Math.min(0.999, t + 0.015));
+          ch.mesh.position.copy(p);
+          ch.mesh.position.y += 0.05;
+          ch.mesh.lookAt(nextP.x, nextP.y + 0.05, nextP.z);
+        });
+        gpsBadgeSprite.position.y = 1.38 + Math.sin(elapsed * 2.6) * 0.09;
+        gpsLineMat.opacity = 0.68 + Math.sin(elapsed * 4.5) * 0.2;
+      }
+
+      // --- 16.4 Actualización de redes dendríticas orgánicas (Estados 3 y 4) ---
+      if (dendriteGrowth > 0.01) {
+        const pulseWave = (Math.sin(elapsed * 4.2) + 1) * 0.5;
+        const cMuted = tmpColorA.set('#4a5460');
+        const cWarm = tmpColorB.set('#ffe066');
+        const cAmber = tmpColorC.set('#ff5400');
+
+        dendriteNodes.forEach(n => {
+          const localProgress = THREE.MathUtils.clamp((dendriteGrowth - n.threshold) * 2.6, 0, 1);
+          const currentScale = n.mesh.scale.x;
+          const nextScale = THREE.MathUtils.lerp(currentScale, Math.max(0.001, localProgress), dt * 4.5);
+          n.mesh.scale.setScalar(nextScale);
+
+          const nodePulse = (Math.sin(elapsed * 5.0 + n.phase) + 1) * 0.5;
+          const colorShift = THREE.MathUtils.clamp((dendriteGrowth - 0.2) / 0.8, 0, 1);
+          tmpColorWork.copy(cMuted).lerp(cWarm, colorShift).lerp(cAmber, nodePulse * colorShift * 0.65);
+          n.mat.color.copy(tmpColorWork);
+          n.mat.emissive.copy(tmpColorWork);
+          n.mat.emissiveIntensity = localProgress * (0.2 + colorShift * (0.65 + pulseWave * 0.75));
+        });
+      }
+
+      // --- 16.5 Partículas de explosión tras cada mordisco ---
+      for (let i = burstParticles.length - 1; i >= 0; i--) {
+        const bp = burstParticles[i];
+        bp.life -= dt * 1.45;
+        bp.mesh.position.addScaledVector(bp.vel, dt);
+        bp.vel.y -= dt * 1.6;
+        bp.mesh.rotation.x += dt * 4;
+        bp.mesh.rotation.y += dt * 5;
+        bp.mesh.material.opacity = Math.max(0, bp.life);
+        bp.mesh.scale.setScalar(Math.max(0.01, bp.life));
+        if (bp.life <= 0) {
+          scene.remove(bp.mesh);
+          bp.mesh.geometry.dispose();
+          bp.mesh.material.dispose();
+          burstParticles.splice(i, 1);
+        }
+      }
+
+      // Rotación suave de las esculturas 3D sobre los restaurantes y deriva de nubes diurnas
+      Object.values(restaurantsMap).forEach((r, idx) => {
+        if (r.roofSculpture) {
+          r.roofSculpture.rotation.y += dt * 0.55;
+          r.roofSculpture.position.y = Math.sin(elapsed * 2 + idx) * 0.1;
+        }
+        if (selectedFood && currentState === STATES.SENSORY_GPS && r.food.id === selectedFood.id) {
+          r.beaconMat.opacity = 0.16 + Math.sin(elapsed * 4) * 0.08;
+        }
+      });
+      clouds.forEach(c => {
+        c.grp.position.x = c.baseX + Math.sin(elapsed * 0.03 * c.speed) * 8;
+      });
+
+      // --- 16.6 Movimiento libre W/A/S/D, orientación de cámara y alineación de estela de luz ---
+      if (autoGuideTimer > 0 && currentState === STATES.SENSORY_GPS) {
+        autoGuideTimer = Math.max(0, autoGuideTimer - dt);
+        const targetRest = selectedFood && restaurantsMap[selectedFood.id] ? restaurantsMap[selectedFood.id].worldPos : null;
+        const dxCafe = (targetRest ? targetRest.x : 12.2) - playerPos.x;
+        const dzCafe = (targetRest ? targetRest.z : -13.5) - playerPos.z;
+        const desiredYaw = Math.atan2(-dxCafe, -dzCafe);
+        let diff = desiredYaw - targetYaw;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        targetYaw += diff * Math.min(1, dt * 2.4);
+        targetPitch = THREE.MathUtils.lerp(targetPitch, -0.04, dt * 2.2);
+      }
+
+      playerYaw = THREE.MathUtils.lerp(playerYaw, targetYaw, dt * 9.0);
+      playerPitch = THREE.MathUtils.lerp(playerPitch, targetPitch, dt * 9.0);
+
+      forwardVec.set(-Math.sin(playerYaw), 0, -Math.cos(playerYaw));
+      rightVec.set(Math.cos(playerYaw), 0, -Math.sin(playerYaw));
+      moveDirVec.set(0, 0, 0);
+      if (keysDown.w) moveDirVec.add(forwardVec);
+      if (keysDown.s) moveDirVec.sub(forwardVec);
+      if (keysDown.d) moveDirVec.add(rightVec);
+      if (keysDown.a) moveDirVec.sub(rightVec);
+
+      const walkSpeed = 6.2;
+      if (moveDirVec.lengthSq() > 0) {
+        moveDirVec.normalize().multiplyScalar(walkSpeed);
+        walkPhase += dt * 9.0;
+      }
+      playerVel.lerp(moveDirVec, dt * 10.0);
+      playerPos.addScaledVector(playerVel, dt);
+      playerPos.x = THREE.MathUtils.clamp(playerPos.x, -38, 38);
+      playerPos.z = THREE.MathUtils.clamp(playerPos.z, -35, 22);
+
+      const speedNorm = Math.min(1, playerVel.length() / walkSpeed);
+      const headBob = Math.sin(walkPhase) * 0.026 * speedNorm;
+      const eyeY = 1.44 + headBob;
+
+      // Actualizar plataforma AR de mano para que el smartphone y hologramas acompañen al usuario
+      handRig.position.set(playerPos.x, eyeY, playerPos.z);
+      handRig.rotation.y = playerYaw;
+      handRig.updateMatrixWorld(true);
+
+      // Orientación del smartphone (acercado al centro de atención en Estado 0, proyectando en Estados 2-4)
+      const isFocusedPhone = currentState === STATES.CAMPUS_EXPLORE;
+      const targetPhoneX = currentState === STATES.SENSORY_GPS ? -0.22 : 0;
+      const targetPhoneY = isFocusedPhone ? -0.15 : -0.34;
+      const targetPhoneZ = isFocusedPhone ? -0.64 : -0.92;
+      const targetPhoneRotX = isFocusedPhone ? -0.16 : -0.38;
+      const targetPhoneRotY = currentState === STATES.SENSORY_GPS ? -0.18 : (isFocusedPhone ? 0.0 : 0.04);
+
+      phoneGroup.position.x = THREE.MathUtils.lerp(phoneGroup.position.x, targetPhoneX, dt * 4.0);
+      phoneGroup.position.y = THREE.MathUtils.lerp(phoneGroup.position.y, targetPhoneY, dt * 4.0);
+      phoneGroup.position.z = THREE.MathUtils.lerp(phoneGroup.position.z, targetPhoneZ, dt * 4.0);
+      phoneGroup.rotation.x = THREE.MathUtils.lerp(phoneGroup.rotation.x, targetPhoneRotX, dt * 4.0);
+      phoneGroup.rotation.y = THREE.MathUtils.lerp(phoneGroup.rotation.y, targetPhoneRotY, dt * 4.0);
+      holoBeamGroup.position.set(phoneGroup.position.x, phoneGroup.position.y + 0.03, phoneGroup.position.z + 0.03);
+
+      if (currentState === STATES.SENSORY_GPS) {
+        beamTargetWorld.set(phoneGroup.position.x, -0.78, -2.55);
+      } else {
+        beamTargetWorld.set(0, 0.04, -2.35);
+      }
+      handRig.localToWorld(beamTargetWorld);
+      holoBeamGroup.lookAt(beamTargetWorld);
+      holoEmitterRing.rotation.z = elapsed * 0.7;
+
+      // Posición y mirada final de cámara con sutil paralaje cuando no se arrastra
+      const parallaxFactor = isPointerDown ? 0 : 0.06;
+      const lookYaw = playerYaw - mouseParallax.x * parallaxFactor;
+      const lookPitch = playerPitch + mouseParallax.y * (parallaxFactor * 0.65);
+
+      camera.position.set(playerPos.x, eyeY, playerPos.z);
+      const lookDist = 4.0;
+      currentCamLook.set(
+        playerPos.x - Math.sin(lookYaw) * Math.cos(lookPitch) * lookDist,
+        eyeY + Math.sin(lookPitch) * lookDist,
+        playerPos.z - Math.cos(lookYaw) * Math.cos(lookPitch) * lookDist
+      );
+      camera.lookAt(currentCamLook);
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  })();
+  </script>
+</body>
+</html>
